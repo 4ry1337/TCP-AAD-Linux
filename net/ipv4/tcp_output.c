@@ -4207,7 +4207,7 @@ void tcp_send_delayed_ack(struct sock *sk)
 
 	pr_info("[DELAYED ACK] --> Entering tcp_send_delayed_ack() for socket: %p\n",
 		sk);
-	pr_info("[DELAYED ACK] Initial ATO: %d microsecs\n", ato);
+	pr_info("[DELAYED ACK] Initial ATO: %lu microsecs\n", ato);
 
 	/* Calculate new timeout */
 	timeout = ktime_get_ns() / 1000ULL + ato;
