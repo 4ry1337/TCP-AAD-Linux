@@ -245,7 +245,8 @@ static inline void inet_csk_reset_xmit_timer(struct sock *sk, const int what,
 	} else if (what == ICSK_TIME_DACK) {
 		icsk->icsk_ack.pending |= ICSK_ACK_TIMER;
 		/* Timeout in microseconds */
-		icsk->icsk_ack.timeout = ktime_get_ns() / 1000 + when;
+		icsk->icsk_ack.timeout =
+			ktime_get_ns() / 1000 + jiffies_to_usecs(when);
 		hrtimer_start(&icsk->icsk_delack_timer,
 			      icsk->icsk_ack.timeout * 1000,
 			      HRTIMER_MODE_ABS_PINNED_SOFT);
