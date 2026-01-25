@@ -119,7 +119,7 @@ struct inet_connection_sock {
 			unused : 4;
 		unsigned long long
 			timeout; /* Currently scheduled timeout	in microsecs */
-		__u32 lrcvtime; /* timestamp of last received data packet */
+		__u64 lrcvtime; /* timestamp of last received data packet */
 		__u16 last_seg_size; /* Size of last incoming segment	   */
 		__u16 rcv_mss; /* MSS used for delayed ACK decisions	   */
 
@@ -243,6 +243,7 @@ static inline void inet_csk_reset_xmit_timer(struct sock *sk, const int what,
 		sk_reset_timer(sk, &icsk->icsk_retransmit_timer,
 			       icsk->icsk_timeout);
 	} else if (what == ICSK_TIME_DACK) {
+		sock_hold(sk);
 		icsk->icsk_ack.pending |= ICSK_ACK_TIMER;
 		/* Timeout in microseconds */
 		icsk->icsk_ack.timeout =
