@@ -312,32 +312,37 @@ void tcp_delack_timer_handler(struct sock *sk)
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 
-	pr_info("[DELAYED ACK TIMER] --> Handler entered for socket: %p\n", sk);
+	pr_debug("[DELAYED ACK TIMER] --> Handler entered for socket: %p\n",
+		 sk);
 
 	/* Ignore irrelevant states */
 	if ((1 << sk->sk_state) & (TCPF_CLOSE | TCPF_LISTEN)) {
-		pr_info("[DELAYED ACK TIMER] Socket in CLOSED or LISTEN state — exiting\n");
+		pr_debug(
+			"[DELAYED ACK TIMER] Socket in CLOSED or LISTEN state — exiting\n");
 		return;
 	}
 
 	/* === Handle SACK compression ACK === */
 	if (tp->compressed_ack) {
-		pr_info("[DELAYED ACK TIMER] Compressed ACKs pending — sending compressed SACK ACK\n");
+		pr_debug(
+			"[DELAYED ACK TIMER] Compressed ACKs pending — sending compressed SACK ACK\n");
 		tcp_mstamp_refresh(tp);
 		tcp_sack_compress_send_ack(sk);
-		pr_info("[DELAYED ACK TIMER] Compressed SACK ACK sent\n");
+		pr_debug("[DELAYED ACK TIMER] Compressed SACK ACK sent\n");
 		return;
 	}
 
 	/* === Check if ACK timer is even pending === */
 	if (!(icsk->icsk_ack.pending & ICSK_ACK_TIMER)) {
-		pr_info("[DELAYED ACK TIMER] No ACK_TIMER pending — nothing to do\n");
+		pr_debug(
+			"[DELAYED ACK TIMER] No ACK_TIMER pending — nothing to do\n");
 		return;
 	}
 
 	/* === Timer not expired yet — reschedule === */
 	if (time_after(icsk->icsk_ack.timeout, jiffies)) {
-		pr_info("[DELAYED ACK TIMER] Timer not yet expired — rescheduling to timeout: %llu\n",
+		pr_debug(
+			"[DELAYED ACK TIMER] Timer not yet expired — rescheduling to timeout: %llu\n",
 			icsk->icsk_ack.timeout);
 		hrtimer_init(&icsk->icsk_delack_timer, icsk->icsk_ack.timeout,
 			     HRTIMER_MODE_ABS_PINNED_SOFT);
@@ -345,7 +350,8 @@ void tcp_delack_timer_handler(struct sock *sk)
 	}
 
 	/* === Timer expired, clear timer bit === */
-	pr_info("[DELAYED ACK TIMER] Timer expired — clearing ACK_TIMER flag\n");
+	pr_debug(
+		"[DELAYED ACK TIMER] Timer expired — clearing ACK_TIMER flag\n");
 	icsk->icsk_ack.pending &= ~ICSK_ACK_TIMER;
 
 	/* === Check if ACK was still scheduled === */
@@ -354,25 +360,29 @@ void tcp_delack_timer_handler(struct sock *sk)
 			/* Not in ping-pong mode → inflate ATO */
 			icsk->icsk_ack.ato = min_t(u32, icsk->icsk_ack.ato << 1,
 						   icsk->icsk_rto);
-			pr_info("[DELAYED ACK TIMER] ACK missed — inflating ATO to: %u (RTO: %u)\n",
+			pr_debug(
+				"[DELAYED ACK TIMER] ACK missed — inflating ATO to: %u (RTO: %u)\n",
 				icsk->icsk_ack.ato, icsk->icsk_rto);
 		} else {
 			/* Ping-pong mode active → exit it and reset ATO */
-			pr_info("[DELAYED ACK TIMER] ACK missed — exiting ping-pong mode and resetting ATO\n");
+			pr_debug(
+				"[DELAYED ACK TIMER] ACK missed — exiting ping-pong mode and resetting ATO\n");
 			inet_csk_exit_pingpong_mode(sk);
 			icsk->icsk_ack.ato = TCP_ATO_MIN;
 		}
 
 		tcp_mstamp_refresh(tp);
 		icsk->icsk_ack.delayed_segs = 0;
-		pr_info("[DELAYED ACK TIMER] Sending ACK due to delayed timeout\n");
+		pr_debug(
+			"[DELAYED ACK TIMER] Sending ACK due to delayed timeout\n");
 		tcp_send_ack(sk);
 		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKS);
-		pr_info("[DELAYED ACK TIMER] Delayed ACK counter incremented\n");
+		pr_debug(
+			"[DELAYED ACK TIMER] Delayed ACK counter incremented\n");
 	}
 
-	pr_info("[DELAYED ACK TIMER] <-- Handler completed for socket: %p\n",
-		sk);
+	pr_debug("[DELAYED ACK TIMER] <-- Handler completed for socket: %p\n",
+		 sk);
 }
 
 static enum hrtimer_restart tcp_delack_hrtimer(struct hrtimer *timer)
@@ -383,7 +393,7 @@ static enum hrtimer_restart tcp_delack_hrtimer(struct hrtimer *timer)
 
 	bh_lock_sock(sk);
 	if (!sock_owned_by_user(sk)) {
-		pr_info("[DELAYED CALLBACK] Owned by a user, processing");
+		pr_debug("[DELAYED CALLBACK] Owned by a user, processing");
 		tcp_delack_timer_handler(sk);
 	} else {
 		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);

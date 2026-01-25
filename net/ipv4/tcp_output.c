@@ -4205,13 +4205,15 @@ void tcp_send_delayed_ack(struct sock *sk)
 	unsigned long ato = icsk->icsk_ack.ato;
 	unsigned long timeout;
 
-	pr_info("[DELAYED ACK] --> Entering tcp_send_delayed_ack() for socket: %p\n",
+	pr_debug(
+		"[DELAYED ACK] --> Entering tcp_send_delayed_ack() for socket: %p\n",
 		sk);
-	pr_info("[DELAYED ACK] Initial ATO: %lu microsecs\n", ato);
+	pr_debug("[DELAYED ACK] Initial ATO: %lu microsecs\n", ato);
 
 	/* Calculate new timeout */
 	timeout = ktime_get_ns() / 1000ULL + ato;
-	pr_info("[DELAYED ACK] Scheduled ACK timeout: %lu (in %lu microsecs)\n",
+	pr_debug(
+		"[DELAYED ACK] Scheduled ACK timeout: %lu (in %lu microsecs)\n",
 		timeout, ato);
 
 	/* === Schedule the delayed ACK === */
@@ -4219,9 +4221,10 @@ void tcp_send_delayed_ack(struct sock *sk)
 	icsk->icsk_ack.timeout = timeout;
 	hrtimer_start(&icsk->icsk_delack_timer, timeout * 1000ULL,
 		      HRTIMER_MODE_ABS_PINNED_SOFT);
-	pr_info("[DELAYED ACK] Delayed ACK scheduled successfully — timeout set to: %lu\n",
+	pr_debug(
+		"[DELAYED ACK] Delayed ACK scheduled successfully — timeout set to: %lu\n",
 		timeout);
-	pr_info("[DELAYED ACK] <-- Exiting tcp_send_delayed_ack()\n");
+	pr_debug("[DELAYED ACK] <-- Exiting tcp_send_delayed_ack()\n");
 }
 
 /* This routine sends an ack and also updates the window. */
