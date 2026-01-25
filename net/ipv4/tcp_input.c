@@ -94,16 +94,14 @@ int sysctl_tcp_max_orphans __read_mostly = NR_FILE;
 #define FLAG_ECE 0x40 /* ECE in this ACK				*/
 #define FLAG_LOST_RETRANS 0x80 /* This ACK marks some retransmission lost */
 #define FLAG_SLOWPATH 0x100 /* Do not skip RFC checks for window update.*/
-#define FLAG_ORIG_SACK_ACKED \
-	0x200 /* Never retransmitted data are (s)acked	*/
+#define FLAG_ORIG_SACK_ACKED 0x200 /* Never retransmitted data are (s)acked	*/
 #define FLAG_SND_UNA_ADVANCED \
 	0x400 /* Snd_una was changed (!= FLAG_DATA_ACKED) */
 #define FLAG_DSACKING_ACK 0x800 /* SACK blocks contained D-SACK info */
 #define FLAG_SET_XMIT_TIMER 0x1000 /* Set TLP or RTO timer */
 #define FLAG_SACK_RENEGING 0x2000 /* snd_una advanced to a sacked seq */
 #define FLAG_UPDATE_TS_RECENT 0x4000 /* tcp_replace_ts_recent() */
-#define FLAG_NO_CHALLENGE_ACK \
-	0x8000 /* do not call tcp_send_challenge_ack()	*/
+#define FLAG_NO_CHALLENGE_ACK 0x8000 /* do not call tcp_send_challenge_ack()	*/
 #define FLAG_ACK_MAYBE_DELAYED 0x10000 /* Likely a delayed ACK */
 #define FLAG_DSACK_TLP 0x20000 /* DSACK for tail loss probe */
 

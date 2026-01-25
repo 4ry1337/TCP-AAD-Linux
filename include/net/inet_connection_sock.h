@@ -114,7 +114,8 @@ struct inet_connection_sock {
 		__u8 pingpong; /* The session is interactive		   */
 		__u8 retry; /* Number of attempts			   */
 		__u32 ato; /* Predicted tick of soft clock	   */
-		__u32 lrcv_flowlabel : 28, /* last received ipv6 flowlabel	   */
+		__u32 lrcv_flowlabel
+			: 28, /* last received ipv6 flowlabel	   */
 			unused : 4;
 		unsigned long long
 			timeout; /* Currently scheduled timeout	in microsecs */
