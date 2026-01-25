@@ -340,12 +340,12 @@ void tcp_delack_timer_handler(struct sock *sk)
 	}
 
 	/* === Timer not expired yet — reschedule === */
-	if (time_after(icsk->icsk_ack.timeout, jiffies)) {
+	if (icsk->icsk_ack.timeout > ktime_get_ns() / 1000ULL) {
 		pr_debug(
 			"[DELAYED ACK TIMER] Timer not yet expired — rescheduling to timeout: %llu\n",
 			icsk->icsk_ack.timeout);
 		hrtimer_start(&icsk->icsk_delack_timer,
-			      ms_to_ktime(icsk->icsk_ack.timeout),
+			      icsk->icsk_ack.timeout * 1000ULL,
 			      HRTIMER_MODE_ABS_PINNED_SOFT);
 		return;
 	}
@@ -394,7 +394,7 @@ static enum hrtimer_restart tcp_delack_hrtimer(struct hrtimer *timer)
 
 	bh_lock_sock(sk);
 	if (!sock_owned_by_user(sk)) {
-		pr_debug("[DELAYED CALLBACK] Owned by a user, processing");
+		pr_debug("[DELAYED CALLBACK] Not owned by a user, processing");
 		tcp_delack_timer_handler(sk);
 	} else {
 		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);
