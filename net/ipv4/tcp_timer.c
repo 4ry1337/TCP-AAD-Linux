@@ -398,13 +398,8 @@ static enum hrtimer_restart tcp_delack_hrtimer(struct hrtimer *timer)
 		tcp_delack_timer_handler(sk);
 	} else {
 		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);
-		/* Delegate work to tcp_release_cb() */
-		if (!test_and_set_bit(TCP_DELACK_TIMER_DEFERRED,
-				      &sk->sk_tsq_flags))
-			sock_hold(sk);
 	}
 	bh_unlock_sock(sk);
-	sock_put(sk);
 
 	return HRTIMER_NORESTART;
 }

@@ -243,7 +243,6 @@ static inline void inet_csk_reset_xmit_timer(struct sock *sk, const int what,
 		sk_reset_timer(sk, &icsk->icsk_retransmit_timer,
 			       icsk->icsk_timeout);
 	} else if (what == ICSK_TIME_DACK) {
-		sock_hold(sk);
 		icsk->icsk_ack.pending |= ICSK_ACK_TIMER;
 		/* Timeout in microseconds */
 		icsk->icsk_ack.timeout =
