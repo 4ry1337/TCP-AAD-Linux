@@ -344,8 +344,9 @@ void tcp_delack_timer_handler(struct sock *sk)
 		pr_debug(
 			"[DELAYED ACK TIMER] Timer not yet expired — rescheduling to timeout: %llu\n",
 			icsk->icsk_ack.timeout);
-		hrtimer_init(&icsk->icsk_delack_timer, icsk->icsk_ack.timeout,
-			     HRTIMER_MODE_ABS_PINNED_SOFT);
+		hrtimer_start(&icsk->icsk_delack_timer,
+			      ms_to_ktime(icsk->icsk_ack.timeout),
+			      HRTIMER_MODE_ABS_PINNED_SOFT);
 		return;
 	}
 
