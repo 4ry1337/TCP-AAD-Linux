@@ -281,6 +281,9 @@ struct netns_ipv4 {
 	u8 sysctl_fib_multipath_use_neigh;
 	u8 sysctl_fib_multipath_hash_policy;
 #endif
+#ifdef CONFIG_TCP_AAD
+	u8 sysctl_tcp_aad;
+#endif
 
 	struct fib_notifier_ops	*notifier_ops;
 	unsigned int	fib_seq;	/* writes protected by rtnl_mutex */

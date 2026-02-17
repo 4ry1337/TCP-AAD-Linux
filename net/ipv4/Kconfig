@@ -767,3 +767,11 @@ config TCP_MD5SIG
 	  on the Internet.
 
 	  If unsure, say N.
+
+config TCP_AAD
+    bool "TCP Adaptive ACK Delay"
+    default n
+    help
+      Replace the default delayed ACK EWMA with an inter-arrival
+      time based adaptive delay algorithm. Can be toggled at
+      runtime via /proc/sys/net/ipv4/tcp_aad.

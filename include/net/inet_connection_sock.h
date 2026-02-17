@@ -121,6 +121,15 @@ struct inet_connection_sock {
 		__u32		  lrcvtime;	 /* timestamp of last received data packet */
 		__u16		  last_seg_size; /* Size of last incoming segment	   */
 		__u16		  rcv_mss;	 /* MSS used for delayed ACK decisions	   */
+
+		/* TCPAAD
+		 * fields for TCP Adaptive ACK Delay
+		 * */
+		__u32 iat_min;
+		__u32 iat_curr;
+		__u32 iat_last_reset_time;
+		__u64 lrcvtime_us;
+		__u16 delayed_segs;
 	} icsk_ack;
 	struct {
 		/* Range of MTUs to search */

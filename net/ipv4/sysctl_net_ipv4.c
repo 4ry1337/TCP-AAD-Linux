@@ -1194,6 +1194,17 @@ static struct ctl_table ipv4_net_table[] = {
 		.extra2		= SYSCTL_ONE,
 	},
 #endif
+#ifdef CONFIG_TCP_AAD
+{
+    .procname    = "tcp_aad",
+    .data        = &init_net.ipv4.sysctl_tcp_aad,
+    .maxlen      = sizeof(u8),
+    .mode        = 0644,
+    .proc_handler = proc_dou8vec_minmax,
+    .extra1      = SYSCTL_ZERO,
+    .extra2      = SYSCTL_ONE,
+},
+#endif
 	{
 		.procname	= "tcp_sack",
 		.data		= &init_net.ipv4.sysctl_tcp_sack,
