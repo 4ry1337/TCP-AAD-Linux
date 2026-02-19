@@ -1009,8 +1009,8 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 
 	now = tcp_jiffies32;
 	
-	#ifdef CONFIG_TCP_AAD
-	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
+	// #ifdef CONFIG_TCP_AAD
+	// if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
 		u64 now_us = tcp_clock_us();
 		if (!icsk->icsk_ack.ato) {
 			/* The _first_ data packet received, initialize
@@ -1042,14 +1042,18 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 
 					icsk->icsk_ack.iat_min_us = min(icsk->icsk_ack.iat_min_us, iat_curr_us);
 
-					u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * 150, 10000);
+					u32 srtt_us = tp->srtt_us >> 3;
+					u32 srtt_clamped = min_t(u32, srtt_us, 100000);
+					u32 beta = 120 + (u32)div_u64((u64)180 * srtt_clamped, 100000);
+					u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * beta, 10000);
+					// u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * 150, 10000);
 					icsk->icsk_ack.ato = clamp_val(usecs_to_jiffies(ato_us), TCP_ATO_MIN, (1UL << ATO_BITS) - 1);
 				} 
 			}
 		}
 		icsk->icsk_ack.lrcvtime_us = now_us;
-	} else 
-	#endif
+	// } else 
+	// #endif
 	{
 		if (!icsk->icsk_ack.ato) {
 			/* The _first_ data packet received, initialize
