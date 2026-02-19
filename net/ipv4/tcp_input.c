@@ -1008,28 +1008,71 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 	tcp_rcv_rtt_measure(tp);
 
 	now = tcp_jiffies32;
-
-	if (!icsk->icsk_ack.ato) {
-		/* The _first_ data packet received, initialize
-		 * delayed ACK engine.
-		 */
-		tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
-		icsk->icsk_ack.ato = TCP_ATO_MIN;
-	} else {
-		int m = now - icsk->icsk_ack.lrcvtime;
-
-		if (m <= TCP_ATO_MIN / 2) {
-			/* The fastest case is the first. */
-			icsk->icsk_ack.ato = (icsk->icsk_ack.ato >> 1) + TCP_ATO_MIN / 2;
-		} else if (m < icsk->icsk_ack.ato) {
-			icsk->icsk_ack.ato = (icsk->icsk_ack.ato >> 1) + m;
-			if (icsk->icsk_ack.ato > icsk->icsk_rto)
-				icsk->icsk_ack.ato = icsk->icsk_rto;
-		} else if (m > icsk->icsk_rto) {
-			/* Too long gap. Apparently sender failed to
-			 * restart window, so that we send ACKs quickly.
+	
+	#ifdef CONFIG_TCP_AAD
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
+		u64 now_us = tcp_clock_us();
+		if (!icsk->icsk_ack.ato) {
+			/* The _first_ data packet received, initialize
+			 * delayed ACK engine.
 			 */
 			tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
+			icsk->icsk_ack.ato = TCP_ATO_MIN;
+			icsk->icsk_ack.iat_min_us = U64_MAX;
+			icsk->icsk_ack.iat_lrtime_us = now_us;
+		} else {
+			u64 iat_curr_us = now_us - icsk->icsk_ack.lrcvtime_us;
+
+			if (iat_curr_us > jiffies_to_usecs(icsk->icsk_rto)) {
+				//--- Stall detection ---
+				tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
+				icsk->icsk_ack.iat_min_us  = U64_MAX;
+			} else {
+				u64 noise_threshold = icsk->icsk_ack.iat_min_us != U64_MAX ?
+					icsk->icsk_ack.iat_min_us / 4 :
+					200; // 200us default until iat_min is established
+
+				if (iat_curr_us >= noise_threshold) {
+					u64 elapsed_us = now_us - icsk->icsk_ack.iat_lrtime_us;
+
+					if (elapsed_us > 1000000) {
+						icsk->icsk_ack.iat_min_us += (icsk->icsk_ack.iat_min_us >> 3);  // +12%
+						icsk->icsk_ack.iat_lrtime_us = now_us;
+					}
+
+					icsk->icsk_ack.iat_min_us = min(icsk->icsk_ack.iat_min_us, iat_curr_us);
+
+					u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * 150, 10000);
+					icsk->icsk_ack.ato = clamp_val(usecs_to_jiffies(ato_us), TCP_ATO_MIN, (1UL << ATO_BITS) - 1);
+				} 
+			}
+		}
+		icsk->icsk_ack.lrcvtime_us = now_us;
+	} else 
+	#endif
+	{
+		if (!icsk->icsk_ack.ato) {
+			/* The _first_ data packet received, initialize
+			 * delayed ACK engine.
+			 */
+			tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
+			icsk->icsk_ack.ato = TCP_ATO_MIN;
+		} else {
+			int m = now - icsk->icsk_ack.lrcvtime;
+
+			if (m <= TCP_ATO_MIN / 2) {
+				/* The fastest case is the first. */
+				icsk->icsk_ack.ato = (icsk->icsk_ack.ato >> 1) + TCP_ATO_MIN / 2;
+			} else if (m < icsk->icsk_ack.ato) {
+				icsk->icsk_ack.ato = (icsk->icsk_ack.ato >> 1) + m;
+				if (icsk->icsk_ack.ato > icsk->icsk_rto)
+					icsk->icsk_ack.ato = icsk->icsk_rto;
+			} else if (m > icsk->icsk_rto) {
+				/* Too long gap. Apparently sender failed to
+				 * restart window, so that we send ACKs quickly.
+				 */
+				tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
+			}
 		}
 	}
 	icsk->icsk_ack.lrcvtime = now;

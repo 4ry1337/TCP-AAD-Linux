@@ -125,11 +125,9 @@ struct inet_connection_sock {
 		/* TCPAAD
 		 * fields for TCP Adaptive ACK Delay
 		 * */
-		__u32 iat_min;
-		__u32 iat_curr;
-		__u32 iat_last_reset_time;
+		__u64 iat_min_us;
+		__u64 iat_lrtime_us;
 		__u64 lrcvtime_us;
-		__u16 delayed_segs;
 	} icsk_ack;
 	struct {
 		/* Range of MTUs to search */
