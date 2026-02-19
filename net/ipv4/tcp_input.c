@@ -1009,8 +1009,8 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 
 	now = tcp_jiffies32;
 	
-	// #ifdef CONFIG_TCP_AAD
-	// if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
+	#ifdef CONFIG_TCP_AAD
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
 		u64 now_us = tcp_clock_us();
 		if (!icsk->icsk_ack.ato) {
 			/* The _first_ data packet received, initialize
@@ -1052,8 +1052,8 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 			}
 		}
 		icsk->icsk_ack.lrcvtime_us = now_us;
-	// } else 
-	// #endif
+	} else 
+	#endif
 	{
 		if (!icsk->icsk_ack.ato) {
 			/* The _first_ data packet received, initialize
