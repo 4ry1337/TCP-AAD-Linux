@@ -1016,15 +1016,15 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 			/* The _first_ data packet received, initialize
 			 * delayed ACK engine.
 			 */
+			pr_debug("TCP_AAD [%llu] RECV sk=%p seq=%u len=%u | INIT\n", now_us, sk, TCP_SKB_CB(skb)->seq, skb->len);
 			tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
 			icsk->icsk_ack.ato = TCP_ATO_MIN;
 			icsk->icsk_ack.iat_min_us = U64_MAX;
-			icsk->icsk_ack.iat_lrtime_us = now_us;
 		} else {
 			u64 iat_curr_us = now_us - icsk->icsk_ack.lrcvtime_us;
-
 			if (iat_curr_us > jiffies_to_usecs(icsk->icsk_rto)) {
 				//--- Stall detection ---
+				pr_debug("TCP_AAD [%llu] RECV sk=%p seq=%u | STALL iat=%llu rto=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, iat_curr_us, jiffies_to_usecs(icsk->icsk_rto));
 				tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
 				icsk->icsk_ack.iat_min_us  = U64_MAX;
 			} else {
@@ -1035,10 +1035,8 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 				if (iat_curr_us >= noise_threshold) {
 					u64 elapsed_us = now_us - icsk->icsk_ack.iat_lrtime_us;
 
-					if (elapsed_us > 1000000) {
+					if (elapsed_us > 1000000)
 						icsk->icsk_ack.iat_min_us += (icsk->icsk_ack.iat_min_us >> 3);  // +12%
-						icsk->icsk_ack.iat_lrtime_us = now_us;
-					}
 
 					icsk->icsk_ack.iat_min_us = min(icsk->icsk_ack.iat_min_us, iat_curr_us);
 
@@ -1047,8 +1045,12 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 					u32 beta = 120 + (u32)div_u64((u64)180 * srtt_clamped, 100000);
 					u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * beta, 10000);
 					// u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * 150, 10000);
-					icsk->icsk_ack.ato = clamp_val(usecs_to_jiffies(ato_us), TCP_ATO_MIN, (1UL << ATO_BITS) - 1);
-				} 
+					// TODO 
+					icsk->icsk_ack.ato = clamp_val(usecs_to_jiffies(ato_us), 1, (1UL << ATO_BITS) - 1);
+					pr_debug("TCP_AAD [%llu] RECV sk=%p seq=%u | iat_curr=%llu iat_min=%llu srtt=%u beta=%u ato_us=%llu ato_jiffies=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, iat_curr_us, icsk->icsk_ack.iat_min_us, srtt_us, beta, ato_us, icsk->icsk_ack.ato);
+				} else {
+					pr_debug("TCP_AAD [%llu] RECV sk=%p seq=%u | NOISE iat=%llu threshold=%llu\n", now_us, sk, TCP_SKB_CB(skb)->seq, iat_curr_us, noise_threshold);
+				}
 			}
 		}
 		icsk->icsk_ack.lrcvtime_us = now_us;
