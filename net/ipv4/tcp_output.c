@@ -4409,7 +4409,14 @@ void tcp_send_delayed_ack(struct sock *sk)
 	if (icsk->icsk_ack.pending & ICSK_ACK_TIMER) {
 		/* If delack timer is about to expire, send ACK now. */
 		if (time_before_eq(icsk_delack_timeout(icsk), jiffies + (ato >> 2))) {
-			pr_debug("TCP_AAD [%llu] SCHED sk=%p EARLY_SEND timer_about_to_expire\n", tcp_clock_us(), sk);
+			#ifdef CONFIG_TCP_AAD
+			if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
+				pr_debug("TCP_AAD [%llu] SCHED sk=%p EARLY_SEND timer_about_to_expire\n", tcp_clock_us(), sk);
+			} else 
+			#endif
+			{
+				pr_debug("TCP_DACK [%llu] SCHED sk=%p EARLY_SEND timer_about_to_expire\n", tcp_clock_us(), sk);
+			}
 			tcp_send_ack(sk);
 			return;
 		}
@@ -4419,11 +4426,14 @@ void tcp_send_delayed_ack(struct sock *sk)
 	}
 	smp_store_release(&icsk->icsk_ack.pending,
 			  icsk->icsk_ack.pending | ICSK_ACK_SCHED | ICSK_ACK_TIMER);
-	pr_debug("TCP_AAD [%llu] SCHED sk=%p ato_in=%d ato_final=%d timeout_ms=%u\n",
-	    tcp_clock_us(), sk,
-	    icsk->icsk_ack.ato,
-	    ato,
-	    jiffies_to_msecs(timeout - jiffies));
+	#ifdef CONFIG_TCP_AAD
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
+		pr_debug("TCP_AAD [%llu] SCHED sk=%p ato_in=%d ato_final=%d timeout_ms=%u\n", tcp_clock_us(), sk, icsk->icsk_ack.ato, ato, jiffies_to_msecs(timeout - jiffies));
+	} else 
+	#endif
+	{
+		pr_debug("TCP_DACK [%llu] SCHED sk=%p ato_in=%d ato_final=%d timeout_ms=%u\n", tcp_clock_us(), sk, icsk->icsk_ack.ato, ato, jiffies_to_msecs(timeout - jiffies));
+	}
 	sk_reset_timer(sk, &icsk->icsk_delack_timer, timeout);
 }
 
@@ -4473,7 +4483,14 @@ EXPORT_SYMBOL_GPL(__tcp_send_ack);
 
 void tcp_send_ack(struct sock *sk)
 {
-	pr_debug("TCP_AAD [%llu] ACK_SENT sk=%p rcv_nxt=%u\n", tcp_clock_us(), sk, tcp_sk(sk)->rcv_nxt);
+	#ifdef CONFIG_TCP_AAD
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
+		pr_debug("TCP_AAD [%llu] ACK_SENT sk=%p rcv_nxt=%u\n", tcp_clock_us(), sk, tcp_sk(sk)->rcv_nxt);
+	} else 
+	#endif
+	{
+		pr_debug("TCP_DACK [%llu] ACK_SENT sk=%p rcv_nxt=%u\n", tcp_clock_us(), sk, tcp_sk(sk)->rcv_nxt);
+	}
 	__tcp_send_ack(sk, tcp_sk(sk)->rcv_nxt, 0);
 }
 
