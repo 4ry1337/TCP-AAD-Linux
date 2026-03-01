@@ -314,11 +314,11 @@ void tcp_delack_timer_handler(struct sock *sk)
 
 	#ifdef CONFIG_TCP_AAD
 	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
-		pr_debug("TCP_AAD [%llu] TIMER_FIRED sk=%p pending=%x\n", tcp_clock_us(), sk, icsk->icsk_ack.pending);
-	} else 
+		pr_debug("TCP_AAD TIMER_FIRED sk=%p pending=%x quick=%u\n", sk, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
+	} else
 	#endif
 	{
-		pr_debug("TCP_DACK [%llu] TIMER_FIRED sk=%p pending=%x\n", tcp_clock_us(), sk, icsk->icsk_ack.pending);
+		pr_debug("TCP_DACK TIMER_FIRED sk=%p pending=%x quick=%u\n", sk, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
 	}
 
 	/* Handling the sack compression case */
@@ -341,11 +341,11 @@ void tcp_delack_timer_handler(struct sock *sk)
 	if (inet_csk_ack_scheduled(sk)) {
 		#ifdef CONFIG_TCP_AAD
 		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
-			pr_debug("TCP_AAD [%llu] TIMER_ACK sk=%p ato_before=%u ato_after=%u pingpong=%d\n", tcp_clock_us(), sk, icsk->icsk_ack.ato, inet_csk_in_pingpong_mode(sk) ? TCP_ATO_MIN : min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto), inet_csk_in_pingpong_mode(sk)); 
-		} else 
+			pr_debug("TCP_AAD TIMER_ACK sk=%p ato_before=%u ato_after=%u pingpong=%d quick=%u\n", sk, icsk->icsk_ack.ato, inet_csk_in_pingpong_mode(sk) ? TCP_ATO_MIN : min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto), inet_csk_in_pingpong_mode(sk), icsk->icsk_ack.quick);
+		} else
 		#endif
 		{
-			pr_debug("TCP_DACK [%llu] TIMER_ACK sk=%p ato_before=%u ato_after=%u pingpong=%d\n", tcp_clock_us(), sk, icsk->icsk_ack.ato, inet_csk_in_pingpong_mode(sk) ? TCP_ATO_MIN : min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto), inet_csk_in_pingpong_mode(sk)); 
+			pr_debug("TCP_DACK TIMER_ACK sk=%p ato_before=%u ato_after=%u pingpong=%d quick=%u\n", sk, icsk->icsk_ack.ato, inet_csk_in_pingpong_mode(sk) ? TCP_ATO_MIN : min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto), inet_csk_in_pingpong_mode(sk), icsk->icsk_ack.quick);
 		}
 		if (!inet_csk_in_pingpong_mode(sk)) {
 			/* Delayed ACK missed: inflate ATO. */
