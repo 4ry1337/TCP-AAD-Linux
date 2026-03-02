@@ -1016,7 +1016,7 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 			/* The _first_ data packet received, initialize
 			 * delayed ACK engine.
 			 */
-			pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u len=%u | INIT\n", now_us, sk, TCP_SKB_CB(skb)->seq, skb->len);
+			pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u len=%u | INIT\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, skb->len);
 			tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
 			icsk->icsk_ack.ato = TCP_ATO_MIN;
 			icsk->icsk_ack.iat_min_us = U64_MAX;
@@ -1024,7 +1024,7 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 			u64 iat_curr_us = now_us - icsk->icsk_ack.lrcvtime_us;
 			if (iat_curr_us > jiffies_to_usecs(icsk->icsk_rto)) {
 				//--- Stall detection ---
-				pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u | STALL iat=%llu rto=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, iat_curr_us, jiffies_to_usecs(icsk->icsk_rto));
+				pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | STALL iat=%llu rto=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, jiffies_to_usecs(icsk->icsk_rto));
 				tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
 				icsk->icsk_ack.iat_min_us  = U64_MAX;
 			} else {
@@ -1047,9 +1047,9 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 					// u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * 150, 10000);
 					// TODO 
 					icsk->icsk_ack.ato = clamp_val(usecs_to_jiffies(ato_us), 1, (1UL << ATO_BITS) - 1);
-					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u | iat_curr=%llu iat_min=%llu elapsed_us=%llu srtt=%u beta=%u ato_us=%llu ato_jiffies=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, iat_curr_us, icsk->icsk_ack.iat_min_us, elapsed_us, srtt_us, beta, ato_us, icsk->icsk_ack.ato);
+					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | iat_curr=%llu iat_min=%llu elapsed_us=%llu srtt=%u beta=%u ato_us=%llu ato_jiffies=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, icsk->icsk_ack.iat_min_us, elapsed_us, srtt_us, beta, ato_us, icsk->icsk_ack.ato);
 				} else {
-					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u | NOISE iat=%llu threshold=%llu\n", now_us, sk, TCP_SKB_CB(skb)->seq, iat_curr_us, noise_threshold);
+					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | NOISE iat=%llu threshold=%llu\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, noise_threshold);
 				}
 			}
 		}
@@ -1061,7 +1061,7 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 			/* The _first_ data packet received, initialize
 			 * delayed ACK engine.
 			 */
-			pr_debug("TCP_DACK RECV now=%u sk=%p seq=%u len=%u | INIT\n", now, sk, TCP_SKB_CB(skb)->seq, skb->len);
+			pr_debug("TCP_DACK RECV now=%u sk=%p seq=%u end_seq=%u len=%u | INIT\n", now, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, skb->len);
 			tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
 			icsk->icsk_ack.ato = TCP_ATO_MIN;
 		} else {
@@ -1070,18 +1070,18 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 			if (m <= TCP_ATO_MIN / 2) {
 				/* The fastest case is the first. */
 				icsk->icsk_ack.ato = (icsk->icsk_ack.ato >> 1) + TCP_ATO_MIN / 2;
-				pr_debug("TCP_DACK RECV now=%u sk=%p seq=%u | FAST m=%d ato=%u\n", now, sk, TCP_SKB_CB(skb)->seq, m, icsk->icsk_ack.ato);
+				pr_debug("TCP_DACK RECV now=%u sk=%p seq=%u end_seq=%u | FAST m=%d ato=%u\n", now, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, m, icsk->icsk_ack.ato);
 			} else if (m < icsk->icsk_ack.ato) {
 				icsk->icsk_ack.ato = (icsk->icsk_ack.ato >> 1) + m;
 				if (icsk->icsk_ack.ato > icsk->icsk_rto)
 					icsk->icsk_ack.ato = icsk->icsk_rto;
-				pr_debug("TCP_DACK RECV now=%u sk=%p seq=%u | MID m=%d ato=%u\n", now, sk, TCP_SKB_CB(skb)->seq, m, icsk->icsk_ack.ato);
+				pr_debug("TCP_DACK RECV now=%u sk=%p seq=%u end_seq=%u | MID m=%d ato=%u\n", now, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, m, icsk->icsk_ack.ato);
 			} else if (m > icsk->icsk_rto) {
 				/* Too long gap. Apparently sender failed to
 				 * restart window, so that we send ACKs quickly.
 				 */
 				tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
-				pr_debug("TCP_DACK RECV now=%u sk=%p seq=%u | STALL m=%d rto=%u\n", now, sk, TCP_SKB_CB(skb)->seq, m, icsk->icsk_rto);
+				pr_debug("TCP_DACK RECV now=%u sk=%p seq=%u end_seq=%u | STALL m=%d rto=%u\n", now, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, m, icsk->icsk_rto);
 			}
 		}
 	}
@@ -5963,8 +5963,8 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	#ifdef CONFIG_TCP_AAD
 	if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
 		struct inet_connection_sock *icsk = inet_csk(sk);
-		pr_debug("TCP_AAD ACK_CHK sk=%p ofo=%d bytes=%u mss=%u quick=%u pingpong=%d pending=%x\n",
-			 sk, ofo_possible,
+		pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u ofo=%d bytes=%u mss=%u quick=%u pingpong=%d pending=%x\n",
+			 sk, tp->rcv_nxt, ofo_possible,
 			 tp->rcv_nxt - tp->rcv_wup, icsk->icsk_ack.rcv_mss,
 			 icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk),
 			 icsk->icsk_ack.pending);
@@ -5972,8 +5972,8 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	#endif
 	{
 		struct inet_connection_sock *icsk = inet_csk(sk);
-		pr_debug("TCP_DACK ACK_CHK sk=%p ofo=%d bytes=%u mss=%u quick=%u pingpong=%d pending=%x\n",
-			 sk, ofo_possible,
+		pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u ofo=%d bytes=%u mss=%u quick=%u pingpong=%d pending=%x\n",
+			 sk, tp->rcv_nxt, ofo_possible,
 			 tp->rcv_nxt - tp->rcv_wup, icsk->icsk_ack.rcv_mss,
 			 icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk),
 			 icsk->icsk_ack.pending);
@@ -6000,14 +6000,14 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 			#ifdef CONFIG_TCP_AAD
 			if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
 				struct inet_connection_sock *icsk = inet_csk(sk);
-				pr_debug("TCP_AAD ACK_CHK sk=%p DEFERRED quick=%u\n",
-					 sk, icsk->icsk_ack.quick);
+				pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u DEFERRED quick=%u\n",
+					 sk, tp->rcv_nxt, icsk->icsk_ack.quick);
 			} else
 			#endif
 			{
 				struct inet_connection_sock *icsk = inet_csk(sk);
-				pr_debug("TCP_DACK ACK_CHK sk=%p DEFERRED quick=%u\n",
-					 sk, icsk->icsk_ack.quick);
+				pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u DEFERRED quick=%u\n",
+					 sk, tp->rcv_nxt, icsk->icsk_ack.quick);
 			}
 			set_bit(TCP_ACK_DEFERRED, &sk->sk_tsq_flags);
 			return;
@@ -6016,15 +6016,15 @@ send_now:
 		#ifdef CONFIG_TCP_AAD
 		if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
 			struct inet_connection_sock *icsk = inet_csk(sk);
-			pr_debug("TCP_AAD ACK_CHK sk=%p SEND_NOW quick=%u pingpong=%d\n",
-				 sk, icsk->icsk_ack.quick,
+			pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u SEND_NOW quick=%u pingpong=%d\n",
+				 sk, tp->rcv_nxt, icsk->icsk_ack.quick,
 				 inet_csk_in_pingpong_mode(sk));
 		} else
 		#endif
 		{
 			struct inet_connection_sock *icsk = inet_csk(sk);
-			pr_debug("TCP_DACK ACK_CHK sk=%p SEND_NOW quick=%u pingpong=%d\n",
-				 sk, icsk->icsk_ack.quick,
+			pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u SEND_NOW quick=%u pingpong=%d\n",
+				 sk, tp->rcv_nxt, icsk->icsk_ack.quick,
 				 inet_csk_in_pingpong_mode(sk));
 		}
 		tcp_send_ack(sk);
@@ -6035,15 +6035,15 @@ send_now:
 		#ifdef CONFIG_TCP_AAD
 		if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
 			struct inet_connection_sock *icsk = inet_csk(sk);
-			pr_debug("TCP_AAD ACK_CHK sk=%p DELAYED quick=%u pingpong=%d ato=%u\n",
-				 sk, icsk->icsk_ack.quick,
+			pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u DELAYED quick=%u pingpong=%d ato=%u\n",
+				 sk, tp->rcv_nxt, icsk->icsk_ack.quick,
 				 inet_csk_in_pingpong_mode(sk), icsk->icsk_ack.ato);
 		} else
 		#endif
 		{
 			struct inet_connection_sock *icsk = inet_csk(sk);
-			pr_debug("TCP_DACK ACK_CHK sk=%p DELAYED quick=%u pingpong=%d ato=%u\n",
-				 sk, icsk->icsk_ack.quick,
+			pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u DELAYED quick=%u pingpong=%d ato=%u\n",
+				 sk, tp->rcv_nxt, icsk->icsk_ack.quick,
 				 inet_csk_in_pingpong_mode(sk), icsk->icsk_ack.ato);
 		}
 		tcp_send_delayed_ack(sk);
@@ -6085,14 +6085,14 @@ send_now:
 
 	#ifdef CONFIG_TCP_AAD
 	if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
-		pr_debug("TCP_AAD ACK_CHK sk=%p COMPRESSED compressed_ack=%u delay_us=%llu\n",
-			 sk, tp->compressed_ack,
+		pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u COMPRESSED compressed_ack=%u delay_us=%llu\n",
+			 sk, tp->rcv_nxt, tp->compressed_ack,
 			 (u64)delay / NSEC_PER_USEC);
 	} else
 	#endif
 	{
-		pr_debug("TCP_DACK ACK_CHK sk=%p COMPRESSED compressed_ack=%u delay_us=%llu\n",
-			 sk, tp->compressed_ack,
+		pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u COMPRESSED compressed_ack=%u delay_us=%llu\n",
+			 sk, tp->rcv_nxt, tp->compressed_ack,
 			 (u64)delay / NSEC_PER_USEC);
 	}
 
@@ -6109,14 +6109,14 @@ static inline void tcp_ack_snd_check(struct sock *sk)
 		#ifdef CONFIG_TCP_AAD
 		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
 			struct inet_connection_sock *icsk = inet_csk(sk);
-			pr_debug("TCP_AAD ACK_CHK sk=%p SKIP pending=%x quick=%u\n",
-				 sk, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
+			pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u SKIP pending=%x quick=%u\n",
+				 sk, tcp_sk(sk)->rcv_nxt, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
 		} else
 		#endif
 		{
 			struct inet_connection_sock *icsk = inet_csk(sk);
-			pr_debug("TCP_DACK ACK_CHK sk=%p SKIP pending=%x quick=%u\n",
-				 sk, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
+			pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u SKIP pending=%x quick=%u\n",
+				 sk, tcp_sk(sk)->rcv_nxt, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
 		}
 		return;
 	}

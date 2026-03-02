@@ -4411,11 +4411,11 @@ void tcp_send_delayed_ack(struct sock *sk)
 		if (time_before_eq(icsk_delack_timeout(icsk), jiffies + (ato >> 2))) {
 			#ifdef CONFIG_TCP_AAD
 			if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
-				pr_debug("TCP_AAD SCHED sk=%p EARLY_SEND timer_about_to_expire\n", sk);
+				pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u EARLY_SEND timer_about_to_expire\n", sk, tcp_sk(sk)->rcv_nxt);
 			} else 
 			#endif
 			{
-				pr_debug("TCP_DACK SCHED sk=%p EARLY_SEND timer_about_to_expire\n", sk);
+				pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u EARLY_SEND timer_about_to_expire\n", sk, tcp_sk(sk)->rcv_nxt);
 			}
 			tcp_send_ack(sk);
 			return;
