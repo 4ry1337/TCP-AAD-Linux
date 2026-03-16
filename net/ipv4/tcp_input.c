@@ -829,52 +829,41 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	u64 now;
 
-	pr_debug(
-		"[DATA RECV EVENT] --> tcp_event_data_recv() triggered for socket: %p\n",
-		sk);
-	pr_debug("[DATA RECV EVENT] skb len: %u, seq: %u, ack_seq: %u\n",
-		 skb->len, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->ack_seq);
-
 	/* === ACK Scheduling === */
 	inet_csk_schedule_ack(sk);
-	pr_debug("[DATA RECV EVENT] ACK scheduled\n");
 
 	/* === Metrics Update === */
 	tcp_measure_rcv_mss(sk, skb);
-	pr_debug("[DATA RECV EVENT] Measured RCV MSS\n");
 
 	tcp_rcv_rtt_measure(tp);
-	pr_debug(
-		"[DATA RECV EVENT] RTT measurement updated (if sample available)\n");
 
 	/* === Timestamping and ATO/IAT Logic === */
 	now = ktime_get_ns() / 1000ULL; // Convert to microseconds
 
 	if (icsk->icsk_ack.last_reset_time + 1000000ULL <= now) {
-		pr_debug(
-			"[DATA RECV EVENT] 1 second elapsed — resetting iat_min\n");
+		pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | IAT_RESET old_iat_min=%u\n",
+			now, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, icsk->icsk_ack.iat_min);
 		icsk->icsk_ack.iat_min = U32_MAX;
 		icsk->icsk_ack.last_reset_time = now;
 	}
 
 	unsigned long m = now - icsk->icsk_ack.lrcvtime;
-	pr_debug("[DATA RECV EVENT] Inter-arrival time (IAT): %lu us\n", m);
 
 	// TODO: threshold for values that are less than 0.2ms (heuristics approach calc). You can substitute by const or var.
 	if (m > 200UL) {
-		pr_debug(
-			"[DATA RECV EVENT] Valid IAT — updating iat_min if smaller\n");
 		icsk->icsk_ack.iat_curr = m;
 		icsk->icsk_ack.iat_min = min(m, icsk->icsk_ack.iat_min);
-		pr_debug("[DATA RECV EVENT] Updated iat_min: %u us\n",
-			 icsk->icsk_ack.iat_min);
+	} else {
+		pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | NOISE iat=%lu threshold=200\n",
+			now, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, m);
 	}
 
 	if (icsk->icsk_ack.delayed_segs < 2) {
-		pr_debug(
-			"[DATA RECV EVENT] Few delayed segments — setting fixed ATO = 500000 us\n");
 		icsk->icsk_ack.ato =
 			500000UL; // TODO: could be moved to some constant as it is widely used in the program
+		pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u len=%u | COLD_START delayed_segs=%u ato_us=%lu\n",
+			now, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, skb->len,
+			icsk->icsk_ack.delayed_segs, icsk->icsk_ack.ato);
 	} else {
 		// no div_u32
 		icsk->icsk_ack.ato = div_u64(
@@ -883,30 +872,21 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 				150UL,
 			10000UL); // simplified formula obtained by Zakirov
 		icsk->icsk_ack.ato = min(icsk->icsk_ack.ato, 500000UL);
-		pr_debug(
-			"[DATA RECV EVENT] Adjusted ATO based on IATs: %u us\n",
-			icsk->icsk_ack.ato);
+		pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | iat_curr=%lu iat_min=%u ato_us=%lu ato_jiffies=%u delayed_segs=%u\n",
+			now, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, m,
+			icsk->icsk_ack.iat_min, icsk->icsk_ack.ato,
+			usecs_to_jiffies(icsk->icsk_ack.ato), icsk->icsk_ack.delayed_segs);
 	}
 
 	/* === Final State Updates === */
 	icsk->icsk_ack.lrcvtime = now;
-	pr_debug("[DATA RECV EVENT] Updated lrcvtime: %llu us\n", now);
 
 	tcp_save_lrcv_flowlabel(sk, skb);
-	pr_debug("[DATA RECV EVENT] Flow label saved\n");
 
 	tcp_ecn_check_ce(sk, skb);
-	pr_debug("[DATA RECV EVENT] ECN check complete\n");
 
-	if (skb->len >= 128) {
-		pr_debug(
-			"[DATA RECV EVENT] Payload length ≥ 128 — attempting receive window growth\n");
+	if (skb->len >= 128)
 		tcp_grow_window(sk, skb, true);
-	}
-
-	pr_debug(
-		"[DATA RECV EVENT] <-- tcp_event_data_recv() complete for socket: %p\n",
-		sk);
 }
 
 /* Called to compute a smoothed rtt estimate. The data fed to this
@@ -5078,9 +5058,6 @@ static int tcp_try_rmem_schedule(struct sock *sk, struct sk_buff *skb,
 
 static void tcp_data_queue_ofo(struct sock *sk, struct sk_buff *skb)
 {
-	pr_debug(
-		"[DATA QUEUE OFO] --> Entered tcp_data_queue_ofo() for socket: %p\n",
-		sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct rb_node **p, *parent;
 	struct sk_buff *skb1;
@@ -5302,25 +5279,14 @@ static void tcp_data_queue(struct sock *sk, struct sk_buff *skb)
 	bool fragstolen;
 	int eaten;
 
-	pr_debug("[DATA QUEUE] --> Entered tcp_data_queue() for socket: %p\n",
-		 sk);
-	pr_debug(
-		"[DATA QUEUE] skb len: %u, seq: %u, end_seq: %u, flags: 0x%x\n",
-		skb->len, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq,
-		TCP_SKB_CB(skb)->tcp_flags);
-
 	/* MPTCP filtering */
 	if (sk_is_mptcp(sk) && !mptcp_incoming_options(sk, skb)) {
-		pr_debug(
-			"[DATA QUEUE] Packet rejected by MPTCP option filter — dropped\n");
 		__kfree_skb(skb);
 		return;
 	}
 
 	/* Zero-length segment (invalid) */
 	if (TCP_SKB_CB(skb)->seq == TCP_SKB_CB(skb)->end_seq) {
-		pr_debug(
-			"[DATA QUEUE] Zero-length segment detected — dropped\n");
 		__kfree_skb(skb);
 		return;
 	}
@@ -5333,21 +5299,11 @@ static void tcp_data_queue(struct sock *sk, struct sk_buff *skb)
 
 	/* === In-sequence Packet === */
 	if (TCP_SKB_CB(skb)->seq == tp->rcv_nxt) {
-		pr_debug(
-			"[DATA QUEUE] In-sequence segment received (seq == rcv_nxt)\n");
-
 		if (tcp_receive_window(tp) == 0) {
-			pr_debug("[DATA QUEUE] Receive window is zero\n");
-
 			if (!skb->len &&
-			    (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)) {
-				pr_debug(
-					"[DATA QUEUE] Accepting FIN-only segment with zero window\n");
+			    (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN))
 				goto queue_and_out;
-			}
 
-			pr_debug(
-				"[DATA QUEUE] Dropping segment — TCP zero window\n");
 			reason = SKB_DROP_REASON_TCP_ZEROWINDOW;
 			NET_INC_STATS(sock_net(sk),
 				      LINUX_MIB_TCPZEROWINDOWDROP);
@@ -5356,17 +5312,12 @@ static void tcp_data_queue(struct sock *sk, struct sk_buff *skb)
 
 queue_and_out:
 		if (tcp_try_rmem_schedule(sk, skb, skb->truesize)) {
-			pr_debug(
-				"[DATA QUEUE] Memory pressure — forcing ACK and scheduling data\n");
-
 			inet_csk(sk)->icsk_ack.pending |=
 				(ICSK_ACK_NOMEM | ICSK_ACK_NOW);
 			inet_csk_schedule_ack(sk);
 			sk->sk_data_ready(sk);
 
 			if (skb_queue_len(&sk->sk_receive_queue) && skb->len) {
-				pr_debug(
-					"[DATA QUEUE] sk_receive_queue not empty and data present — dropping packet\n");
 				reason = SKB_DROP_REASON_PROTO_MEM;
 				NET_INC_STATS(sock_net(sk),
 					      LINUX_MIB_TCPRCVQDROP);
@@ -5376,30 +5327,18 @@ queue_and_out:
 		}
 
 		eaten = tcp_queue_rcv(sk, skb, &fragstolen);
-		pr_debug("[DATA QUEUE] Segment queued to receive queue\n");
 
-		if (skb->len) {
-			pr_debug(
-				"[DATA QUEUE] Payload present — invoking tcp_event_data_recv()\n");
+		if (skb->len)
 			tcp_event_data_recv(sk, skb);
-		}
 
-		if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN) {
-			pr_debug(
-				"[DATA QUEUE] FIN flag detected — calling tcp_fin()\n");
+		if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)
 			tcp_fin(sk);
-		}
 
 		if (!RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
-			pr_debug(
-				"[DATA QUEUE] Out-of-order queue not empty — calling tcp_ofo_queue()\n");
 			tcp_ofo_queue(sk);
 
-			if (RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
-				pr_debug(
-					"[DATA QUEUE] Gaps filled — setting ACK_NOW\n");
+			if (RB_EMPTY_ROOT(&tp->out_of_order_queue))
 				inet_csk(sk)->icsk_ack.pending |= ICSK_ACK_NOW;
-			}
 		}
 
 		if (tp->rx_opt.num_sacks)
@@ -5410,21 +5349,14 @@ queue_and_out:
 		if (eaten > 0)
 			kfree_skb_partial(skb, fragstolen);
 
-		if (!sock_flag(sk, SOCK_DEAD)) {
-			pr_debug(
-				"[DATA QUEUE] Data ready callback scheduled\n");
+		if (!sock_flag(sk, SOCK_DEAD))
 			tcp_data_ready(sk);
-		}
 
-		pr_debug("[DATA QUEUE] <-- tcp_data_queue() complete\n");
 		return;
 	}
 
 	/* === Retransmit (Old Data) === */
 	if (!after(TCP_SKB_CB(skb)->end_seq, tp->rcv_nxt)) {
-		pr_debug(
-			"[DATA QUEUE] Retransmitted or duplicate segment — setting D-SACK and ACK_NOW\n");
-
 		tcp_rcv_spurious_retrans(sk, skb);
 		reason = SKB_DROP_REASON_TCP_OLD_DATA;
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOST);
@@ -5437,21 +5369,15 @@ queue_and_out:
 	/* === Invalid: Outside Receive Window === */
 	if (!before(TCP_SKB_CB(skb)->seq,
 		    tp->rcv_nxt + tcp_receive_window(tp))) {
-		pr_debug(
-			"[DATA QUEUE] Packet beyond right edge of receive window — dropping\n");
 		reason = SKB_DROP_REASON_TCP_OVERWINDOW;
 		goto out_of_window;
 	}
 
 	/* === Partial Overlap (Leading part invalid) === */
 	if (before(TCP_SKB_CB(skb)->seq, tp->rcv_nxt)) {
-		pr_debug(
-			"[DATA QUEUE] Partially overlapping packet — setting D-SACK\n");
 		tcp_dsack_set(sk, TCP_SKB_CB(skb)->seq, tp->rcv_nxt);
 
 		if (!tcp_receive_window(tp)) {
-			pr_debug(
-				"[DATA QUEUE] Window closed — dropping tail\n");
 			reason = SKB_DROP_REASON_TCP_ZEROWINDOW;
 			NET_INC_STATS(sock_net(sk),
 				      LINUX_MIB_TCPZEROWINDOWDROP);
@@ -5461,21 +5387,15 @@ queue_and_out:
 	}
 
 	/* === Out-of-Order Packet === */
-	pr_debug(
-		"[DATA QUEUE] Out-of-order segment received — queuing to OFO queue\n");
 	tcp_data_queue_ofo(sk, skb);
-	pr_debug("[DATA QUEUE] <-- tcp_data_queue() complete (OFO)\n");
 	return;
 
 out_of_window:
-	pr_debug(
-		"[DATA QUEUE] Entered out-of-window handling — scheduling quick ACK and dropping\n");
 	tcp_enter_quickack_mode(sk, TCP_MAX_QUICKACKS);
 	inet_csk_schedule_ack(sk);
 
 drop:
 	tcp_drop_reason(sk, skb, reason);
-	pr_debug("[DATA QUEUE] <-- tcp_data_queue() complete (DROP)\n");
 }
 
 static struct sk_buff *tcp_skb_next(struct sk_buff *skb,
@@ -5874,65 +5794,57 @@ static inline void tcp_data_snd_check(struct sock *sk)
 static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
+	struct inet_connection_sock *icsk = inet_csk(sk);
 	unsigned long rtt, delay;
+	bool two_seg, quick, ack_now, comp_limit, dup_ack;
 
-	pr_debug(
-		"[__TCP ACK CHECK] --> Entering __tcp_ack_snd_check() for socket: %p\n",
-		sk);
-	pr_debug(
-		"[__TCP ACK CHECK] rcv_nxt: %u, rcv_wup: %u, copied_seq: %u, sk_rcvlowat: %u, rcv_wnd: %u\n",
-		tp->rcv_nxt, tp->rcv_wup, tp->copied_seq, sk->sk_rcvlowat,
-		tp->rcv_wnd);
+	pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u ofo=%d bytes=%u mss=%u quick=%u pingpong=%d pending=%x delayed_segs=%u\n",
+		sk, tp->rcv_nxt, ofo_possible,
+		tp->rcv_nxt - tp->rcv_wup, icsk->icsk_ack.rcv_mss,
+		icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk),
+		icsk->icsk_ack.pending, icsk->icsk_ack.delayed_segs);
 
 	/* === Immediate ACK Conditions === */
-	if (((tp->rcv_nxt - tp->rcv_wup) > inet_csk(sk)->icsk_ack.rcv_mss &&
-	     (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat ||
-	      __tcp_select_window(sk) >= tp->rcv_wnd)) ||
-	    tcp_in_quickack_mode(sk) ||
-	    (inet_csk(sk)->icsk_ack.pending & ICSK_ACK_NOW)) {
-		pr_debug(
-			"[__TCP ACK CHECK] ACK required immediately due to:\n");
-		if ((tp->rcv_nxt - tp->rcv_wup) >
-		    inet_csk(sk)->icsk_ack.rcv_mss)
-			pr_debug(
-				"  - Full frame received (rcv_nxt - rcv_wup > rcv_mss)\n");
+	two_seg = (tp->rcv_nxt - tp->rcv_wup) > icsk->icsk_ack.rcv_mss &&
+		  (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat ||
+		   __tcp_select_window(sk) >= tp->rcv_wnd);
+	quick   = tcp_in_quickack_mode(sk);
+	ack_now = icsk->icsk_ack.pending & ICSK_ACK_NOW;
+	comp_limit = false;
+	dup_ack = false;
 
-		if ((tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat))
-			pr_debug(
-				"  - SO_RCVLOWAT condition not met (copied_seq too small)\n");
-
-		if (__tcp_select_window(sk) >= tp->rcv_wnd)
-			pr_debug("  - Receive window advanced sufficiently\n");
-
-		if (tcp_in_quickack_mode(sk))
-			pr_debug("  - Quick ACK mode is active\n");
-
-		if (inet_csk(sk)->icsk_ack.pending & ICSK_ACK_NOW)
-			pr_debug(
-				"  - ICSK_ACK_NOW set (protocol state mandates ACK)\n");
-
+	if (two_seg || quick || ack_now) {
 		if (sock_owned_by_user_nocheck(sk) &&
 		    READ_ONCE(
 			    sock_net(sk)->ipv4.sysctl_tcp_backlog_ack_defer)) {
-			pr_debug(
-				"[__TCP ACK CHECK] Deferring ACK due to user context and backlog defer enabled\n");
+			pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u DEFERRED quick=%u\n",
+				sk, tp->rcv_nxt, icsk->icsk_ack.quick);
 			set_bit(TCP_ACK_DEFERRED, &sk->sk_tsq_flags);
 			return;
 		}
 
 send_now:
-		pr_debug("[__TCP ACK CHECK] Sending immediate ACK\n");
-		inet_csk(sk)->icsk_ack.delayed_segs = 0;
+		icsk->icsk_ack.delayed_segs = 0;
+		pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u SEND_NOW reason=%s%s%s%s%s mss=%u quick=%u pingpong=%d pending=%x\n",
+			sk, tp->rcv_nxt,
+			two_seg    ? "TWO_SEG " : "",
+			quick      ? "QUICK "   : "",
+			ack_now    ? "ACK_NOW " : "",
+			comp_limit ? "COMP_LIMIT " : "",
+			dup_ack    ? "DUP_ACK " : "",
+			icsk->icsk_ack.rcv_mss,
+			icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk),
+			icsk->icsk_ack.pending);
 		tcp_send_ack(sk);
 		return;
 	}
 
 	/* === Delayed ACK Path === */
 	if (!ofo_possible || RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
-		pr_debug(
-			"[__TCP ACK CHECK] Sending delayed ACK (no out-of-order packets: %d)\n",
-			++inet_csk(sk)->icsk_ack.delayed_segs);
-
+		++icsk->icsk_ack.delayed_segs;
+		pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u DELAYED quick=%u pingpong=%d ato=%lu delayed_segs=%u\n",
+			sk, tp->rcv_nxt, icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk),
+			icsk->icsk_ack.ato, icsk->icsk_ack.delayed_segs);
 		tcp_send_delayed_ack(sk);
 		return;
 	}
@@ -5941,36 +5853,25 @@ send_now:
 	if (!tcp_is_sack(tp) ||
 	    tp->compressed_ack >=
 		    READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_comp_sack_nr)) {
-		pr_debug(
-			"[__TCP ACK CHECK] Compressed ACK threshold exceeded or SACK disabled — sending ACK\n");
+		comp_limit = true;
 		goto send_now;
 	}
 
 	if (tp->compressed_ack_rcv_nxt != tp->rcv_nxt) {
-		pr_debug(
-			"[__TCP ACK CHECK] rcv_nxt changed — resetting dup_ack_counter\n");
 		tp->compressed_ack_rcv_nxt = tp->rcv_nxt;
 		tp->dup_ack_counter = 0;
 	}
 
 	if (tp->dup_ack_counter < TCP_FASTRETRANS_THRESH) {
 		tp->dup_ack_counter++;
-		pr_debug(
-			"[__TCP ACK CHECK] Incrementing dup_ack_counter (%d), sending ACK\n",
-			tp->dup_ack_counter);
+		dup_ack = true;
 		goto send_now;
 	}
 
 	tp->compressed_ack++;
-	pr_debug(
-		"[__TCP ACK CHECK] Starting compressed ACK timer — compressed_ack: %d\n",
-		tp->compressed_ack);
 
-	if (hrtimer_is_queued(&tp->compressed_ack_timer)) {
-		pr_debug(
-			"[__TCP ACK CHECK] Compressed ACK timer already queued — no action\n");
+	if (hrtimer_is_queued(&tp->compressed_ack_timer))
 		return;
-	}
 
 	rtt = tp->rcv_rtt_est.rtt_us;
 	if (tp->srtt_us && tp->srtt_us < rtt)
@@ -5981,11 +5882,9 @@ send_now:
 		READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_comp_sack_delay_ns),
 		rtt *(NSEC_PER_USEC >> 3) / 20);
 
-	pr_debug(
-		"[__TCP ACK CHECK] Scheduling compressed ACK timer with delay: %lu ns\n",
-		delay);
-
 	sock_hold(sk);
+	pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u COMPRESSED compressed_ack=%d delay_ns=%lu\n",
+		sk, tp->rcv_nxt, tp->compressed_ack, delay);
 	hrtimer_start_range_ns(
 		&tp->compressed_ack_timer, ns_to_ktime(delay),
 		READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_comp_sack_slack_ns),
@@ -5994,21 +5893,12 @@ send_now:
 
 static inline void tcp_ack_snd_check(struct sock *sk)
 {
-	pr_debug(
-		"[TCP ACK CHECK] --> Entering tcp_ack_snd_check() for socket: %p\n",
-		sk);
-
 	if (!inet_csk_ack_scheduled(sk)) {
-		pr_debug(
-			"[TCP ACK CHECK] No ACK scheduled — skipping ACK transmission\n");
+		pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u SKIP pending=%x quick=%u\n",
+			sk, tcp_sk(sk)->rcv_nxt, inet_csk(sk)->icsk_ack.pending, inet_csk(sk)->icsk_ack.quick);
 		return;
 	}
-
-	pr_debug(
-		"[TCP ACK CHECK] ACK scheduled — invoking __tcp_ack_snd_check()\n");
 	__tcp_ack_snd_check(sk, 1);
-	pr_debug(
-		"[TCP ACK CHECK] ACK transmission completed via __tcp_ack_snd_check()\n");
 }
 
 /*
@@ -6284,27 +6174,18 @@ reset:
  */
 void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 {
-	pr_debug("========== TCP ESTABLISHED PACKET RECEIVED ==========\n");
 	enum skb_drop_reason reason = SKB_DROP_REASON_NOT_SPECIFIED;
 	const struct tcphdr *th = (const struct tcphdr *)skb->data;
 	struct tcp_sock *tp = tcp_sk(sk);
 	unsigned int len = skb->len;
 
-	pr_debug(
-		"[INFO] Packet Length: %u, Seq: %u, Ack_Seq: %u, Flags: 0x%x\n",
-		len, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->ack_seq,
-		tcp_flag_word(th));
-
-	pr_debug("[INFO] Time now is: %lu jiffies\n", jiffies);
 	/* TCP congestion window tracking */
 	trace_tcp_probe(sk, skb);
 
 	/* Timestamp and destination setup */
 	tcp_mstamp_refresh(tp);
-	if (unlikely(!rcu_access_pointer(sk->sk_rx_dst))) {
-		pr_debug("[INFO] Setting RX DST via sk_rx_dst_set\n");
+	if (unlikely(!rcu_access_pointer(sk->sk_rx_dst)))
 		inet_csk(sk)->icsk_af_ops->sk_rx_dst_set(sk, skb);
-	}
 
 	/* Reset timestamp option flag */
 	tp->rx_opt.saw_tstamp = 0;
@@ -6313,37 +6194,20 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 	if ((tcp_flag_word(th) & TCP_HP_BITS) == tp->pred_flags &&
 	    TCP_SKB_CB(skb)->seq == tp->rcv_nxt &&
 	    !after(TCP_SKB_CB(skb)->ack_seq, tp->snd_nxt)) {
-		pr_debug("[FAST PATH] Fast path criteria matched\n");
-
 		int tcp_header_len = tp->tcp_header_len;
-		pr_debug("[FAST PATH] TCP Header Length: %d\n", tcp_header_len);
 
 		if (tcp_header_len ==
 		    sizeof(struct tcphdr) + TCPOLEN_TSTAMP_ALIGNED) {
-			pr_debug("[FAST PATH] Timestamp header detected\n");
-
-			if (!tcp_parse_aligned_timestamp(tp, th)) {
-				pr_debug(
-					"[FAST PATH] Timestamp parsing failed -> SLOW PATH\n");
+			if (!tcp_parse_aligned_timestamp(tp, th))
 				goto slow_path;
-			}
 
 			if ((s32)(tp->rx_opt.rcv_tsval - tp->rx_opt.ts_recent) <
-			    0) {
-				pr_debug(
-					"[FAST PATH] PAWS check failed -> SLOW PATH\n");
+			    0)
 				goto slow_path;
-			}
 		}
 
 		if (len <= tcp_header_len) {
-			pr_debug(
-				"[FAST PATH] No payload in packet (len <= header_len)\n");
-
 			if (len == tcp_header_len) {
-				pr_debug(
-					"[FAST PATH] Pure ACK (header only)\n");
-
 				if (tcp_header_len ==
 					    (sizeof(struct tcphdr) +
 					     TCPOLEN_TSTAMP_ALIGNED) &&
@@ -6355,35 +6219,21 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 				tcp_data_snd_check(sk);
 
 				tp->rcv_rtt_last_tsecr = tp->rx_opt.rcv_tsecr;
-
-				pr_debug(
-					"[FAST PATH] Pure ACK processed and skb freed\n");
-				pr_debug(
-					"========== TCP PACKET HANDLING COMPLETE ==========\n");
 				return;
 			} else {
-				pr_warn("[FAST PATH] Header too small! Packet dropped.\n");
 				reason = SKB_DROP_REASON_PKT_TOO_SMALL;
 				TCP_INC_STATS(sock_net(sk), TCP_MIB_INERRS);
 				goto discard;
 			}
 		} else {
-			pr_debug(
-				"[FAST PATH] Packet contains payload (len > header)\n");
 			int eaten = 0;
 			bool fragstolen = false;
 
-			if (tcp_checksum_complete(skb)) {
-				pr_warn("[FAST PATH] TCP checksum failed\n");
+			if (tcp_checksum_complete(skb))
 				goto csum_error;
-			}
 
-			if ((int)skb->truesize > sk->sk_forward_alloc) {
-				pr_debug(
-					"[FAST PATH] Forward allocation exceeded: truesize=%u, forward_alloc=%u\n",
-					skb->truesize, sk->sk_forward_alloc);
+			if ((int)skb->truesize > sk->sk_forward_alloc)
 				goto step5;
-			}
 
 			if (tcp_header_len == (sizeof(struct tcphdr) +
 					       TCPOLEN_TSTAMP_ALIGNED) &&
@@ -6400,8 +6250,6 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 			tcp_event_data_recv(sk, skb);
 
 			if (TCP_SKB_CB(skb)->ack_seq != tp->snd_una) {
-				pr_debug(
-					"[FAST PATH] Acknowledgment advanced (ack_seq != snd_una)\n");
 				tcp_ack(sk, skb, FLAG_DATA);
 				tcp_data_snd_check(sk);
 
@@ -6417,39 +6265,25 @@ no_ack:
 			if (eaten)
 				kfree_skb_partial(skb, fragstolen);
 			tcp_data_ready(sk);
-
-			pr_debug(
-				"[FAST PATH] Payload processed, skb handled\n");
-			pr_debug(
-				"========== TCP PACKET HANDLING COMPLETE ==========\n");
 			return;
 		}
 	}
 
 slow_path:
-	pr_debug("[SLOW PATH] Entered slow path processing\n");
-
-	if (len < (th->doff << 2) || tcp_checksum_complete(skb)) {
-		pr_warn("[SLOW PATH] Invalid header length or checksum failed\n");
+	if (len < (th->doff << 2) || tcp_checksum_complete(skb))
 		goto csum_error;
-	}
 
 	if (!th->ack && !th->rst && !th->syn) {
-		pr_warn("[SLOW PATH] TCP packet without control flags -> DROP\n");
 		reason = SKB_DROP_REASON_TCP_FLAGS;
 		goto discard;
 	}
 
-	if (!tcp_validate_incoming(sk, skb, th, 1)) {
-		pr_warn("[SLOW PATH] Incoming packet validation failed\n");
+	if (!tcp_validate_incoming(sk, skb, th, 1))
 		return;
-	}
 
 step5:
 	reason = tcp_ack(sk, skb, FLAG_SLOWPATH | FLAG_UPDATE_TS_RECENT);
 	if ((int)reason < 0) {
-		pr_warn("[SLOW PATH] TCP ACK rejected (reason: %d)\n",
-			-(int)reason);
 		reason = -reason;
 		goto discard;
 	}
@@ -6460,9 +6294,6 @@ step5:
 
 	tcp_data_snd_check(sk);
 	tcp_ack_snd_check(sk);
-
-	pr_debug("[SLOW PATH] Packet successfully queued and ACK checked\n");
-	pr_debug("========== TCP PACKET HANDLING COMPLETE ==========\n");
 	return;
 
 csum_error:
@@ -6470,12 +6301,9 @@ csum_error:
 	trace_tcp_bad_csum(skb);
 	TCP_INC_STATS(sock_net(sk), TCP_MIB_CSUMERRORS);
 	TCP_INC_STATS(sock_net(sk), TCP_MIB_INERRS);
-	pr_err("[ERROR] TCP checksum error -> DROP\n");
 
 discard:
-	pr_err("[DROP] Dropping packet, reason: %d\n", reason);
 	tcp_drop_reason(sk, skb, reason);
-	pr_debug("========== TCP PACKET HANDLING COMPLETE ==========\n");
 }
 EXPORT_SYMBOL(tcp_rcv_established);
 

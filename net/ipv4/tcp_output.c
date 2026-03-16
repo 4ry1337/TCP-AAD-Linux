@@ -4205,26 +4205,16 @@ void tcp_send_delayed_ack(struct sock *sk)
 	unsigned long ato = icsk->icsk_ack.ato;
 	unsigned long timeout;
 
-	pr_debug(
-		"[DELAYED ACK] --> Entering tcp_send_delayed_ack() for socket: %p\n",
-		sk);
-	pr_debug("[DELAYED ACK] Initial ATO: %lu microsecs\n", ato);
-
 	/* Calculate new timeout */
 	timeout = ktime_get_ns() / 1000ULL + ato;
-	pr_debug(
-		"[DELAYED ACK] Scheduled ACK timeout: %lu (in %lu microsecs)\n",
-		timeout, ato);
 
 	/* === Schedule the delayed ACK === */
 	icsk->icsk_ack.pending |= ICSK_ACK_SCHED | ICSK_ACK_TIMER;
 	icsk->icsk_ack.timeout = timeout;
+	pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u ato_us=%lu ato_jiffies=%lu timeout_us=%lu\n",
+		sk, tcp_sk(sk)->rcv_nxt, ato, usecs_to_jiffies(ato), timeout);
 	hrtimer_start(&icsk->icsk_delack_timer, timeout * 1000ULL,
 		      HRTIMER_MODE_ABS_PINNED_SOFT);
-	pr_debug(
-		"[DELAYED ACK] Delayed ACK scheduled successfully — timeout set to: %lu\n",
-		timeout);
-	pr_debug("[DELAYED ACK] <-- Exiting tcp_send_delayed_ack()\n");
 }
 
 /* This routine sends an ack and also updates the window. */
@@ -4273,6 +4263,7 @@ EXPORT_SYMBOL_GPL(__tcp_send_ack);
 
 void tcp_send_ack(struct sock *sk)
 {
+	pr_debug("TCP_AAD ACK_SENT sk=%p rcv_nxt=%u\n", sk, tcp_sk(sk)->rcv_nxt);
 	__tcp_send_ack(sk, tcp_sk(sk)->rcv_nxt);
 }
 
