@@ -5956,13 +5956,14 @@ static inline void tcp_data_snd_check(struct sock *sk)
 static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
+	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct net *net = sock_net(sk);
 	unsigned long rtt;
 	u64 delay;
+	bool two_seg, quick, ack_now, comp_limit, dup_ack;
 
 	#ifdef CONFIG_TCP_AAD
 	if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
-		struct inet_connection_sock *icsk = inet_csk(sk);
 		pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u ofo=%d bytes=%u mss=%u quick=%u pingpong=%d pending=%x\n",
 			 sk, tp->rcv_nxt, ofo_possible,
 			 tp->rcv_nxt - tp->rcv_wup, icsk->icsk_ack.rcv_mss,
@@ -5971,7 +5972,6 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	} else
 	#endif
 	{
-		struct inet_connection_sock *icsk = inet_csk(sk);
 		pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u ofo=%d bytes=%u mss=%u quick=%u pingpong=%d pending=%x\n",
 			 sk, tp->rcv_nxt, ofo_possible,
 			 tp->rcv_nxt - tp->rcv_wup, icsk->icsk_ack.rcv_mss,
@@ -5979,19 +5979,16 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 			 icsk->icsk_ack.pending);
 	}
 
-	    /* More than one full frame received... */
-	if (((tp->rcv_nxt - tp->rcv_wup) > inet_csk(sk)->icsk_ack.rcv_mss &&
-	     /* ... and right edge of window advances far enough.
-	      * (tcp_recvmsg() will send ACK otherwise).
-	      * If application uses SO_RCVLOWAT, we want send ack now if
-	      * we have not received enough bytes to satisfy the condition.
-	      */
-	    (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat ||
-	     __tcp_select_window(sk) >= tp->rcv_wnd)) ||
-	    /* We ACK each frame or... */
-	    tcp_in_quickack_mode(sk) ||
-	    /* Protocol state mandates a one-time immediate ACK */
-	    inet_csk(sk)->icsk_ack.pending & ICSK_ACK_NOW) {
+	/* === Immediate ACK Conditions === */
+	two_seg = (tp->rcv_nxt - tp->rcv_wup) > icsk->icsk_ack.rcv_mss &&
+		  (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat ||
+		   __tcp_select_window(sk) >= tp->rcv_wnd);
+	quick   = tcp_in_quickack_mode(sk);
+	ack_now = icsk->icsk_ack.pending & ICSK_ACK_NOW;
+	comp_limit = false;
+	dup_ack = false;
+
+	if (two_seg || quick || ack_now) {
 		/* If we are running from __release_sock() in user context,
 		 * Defer the ack until tcp_release_cb().
 		 */
@@ -5999,49 +5996,59 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 		    READ_ONCE(net->ipv4.sysctl_tcp_backlog_ack_defer)) {
 			#ifdef CONFIG_TCP_AAD
 			if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
-				struct inet_connection_sock *icsk = inet_csk(sk);
 				pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u DEFERRED quick=%u\n",
 					 sk, tp->rcv_nxt, icsk->icsk_ack.quick);
 			} else
 			#endif
 			{
-				struct inet_connection_sock *icsk = inet_csk(sk);
 				pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u DEFERRED quick=%u\n",
 					 sk, tp->rcv_nxt, icsk->icsk_ack.quick);
 			}
 			set_bit(TCP_ACK_DEFERRED, &sk->sk_tsq_flags);
 			return;
 		}
+
 send_now:
 		#ifdef CONFIG_TCP_AAD
 		if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
-			struct inet_connection_sock *icsk = inet_csk(sk);
-			pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u SEND_NOW quick=%u pingpong=%d\n",
-				 sk, tp->rcv_nxt, icsk->icsk_ack.quick,
-				 inet_csk_in_pingpong_mode(sk));
+			pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u SEND_NOW reason=%s%s%s%s%s mss=%u quick=%u pingpong=%d pending=%x\n",
+				 sk, tp->rcv_nxt,
+				 two_seg    ? "TWO_SEG " : "",
+				 quick      ? "QUICK "   : "",
+				 ack_now    ? "ACK_NOW " : "",
+				 comp_limit ? "COMP_LIMIT " : "",
+				 dup_ack    ? "DUP_ACK " : "",
+				 icsk->icsk_ack.rcv_mss,
+				 icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk),
+				 icsk->icsk_ack.pending);
 		} else
 		#endif
 		{
-			struct inet_connection_sock *icsk = inet_csk(sk);
-			pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u SEND_NOW quick=%u pingpong=%d\n",
-				 sk, tp->rcv_nxt, icsk->icsk_ack.quick,
-				 inet_csk_in_pingpong_mode(sk));
+			pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u SEND_NOW reason=%s%s%s%s%s mss=%u quick=%u pingpong=%d pending=%x\n",
+				 sk, tp->rcv_nxt,
+				 two_seg    ? "TWO_SEG " : "",
+				 quick      ? "QUICK "   : "",
+				 ack_now    ? "ACK_NOW " : "",
+				 comp_limit ? "COMP_LIMIT " : "",
+				 dup_ack    ? "DUP_ACK " : "",
+				 icsk->icsk_ack.rcv_mss,
+				 icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk),
+				 icsk->icsk_ack.pending);
 		}
 		tcp_send_ack(sk);
 		return;
 	}
 
+	/* === Delayed ACK Path === */
 	if (!ofo_possible || RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
 		#ifdef CONFIG_TCP_AAD
 		if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
-			struct inet_connection_sock *icsk = inet_csk(sk);
 			pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u DELAYED quick=%u pingpong=%d ato=%u\n",
 				 sk, tp->rcv_nxt, icsk->icsk_ack.quick,
 				 inet_csk_in_pingpong_mode(sk), icsk->icsk_ack.ato);
 		} else
 		#endif
 		{
-			struct inet_connection_sock *icsk = inet_csk(sk);
 			pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u DELAYED quick=%u pingpong=%d ato=%u\n",
 				 sk, tp->rcv_nxt, icsk->icsk_ack.quick,
 				 inet_csk_in_pingpong_mode(sk), icsk->icsk_ack.ato);
@@ -6050,9 +6057,12 @@ send_now:
 		return;
 	}
 
+	/* === Compressed ACK Path (for SACK) === */
 	if (!tcp_is_sack(tp) ||
-	    tp->compressed_ack >= READ_ONCE(net->ipv4.sysctl_tcp_comp_sack_nr))
+	    tp->compressed_ack >= READ_ONCE(net->ipv4.sysctl_tcp_comp_sack_nr)) {
+		comp_limit = true;
 		goto send_now;
+	}
 
 	if (tp->compressed_ack_rcv_nxt != tp->rcv_nxt) {
 		tp->compressed_ack_rcv_nxt = tp->rcv_nxt;
@@ -6060,6 +6070,7 @@ send_now:
 	}
 	if (tp->dup_ack_counter < TCP_FASTRETRANS_THRESH) {
 		tp->dup_ack_counter++;
+		dup_ack = true;
 		goto send_now;
 	}
 	tp->compressed_ack++;
