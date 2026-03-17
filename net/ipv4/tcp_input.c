@@ -1034,11 +1034,12 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 
 				if (iat_curr_us >= noise_threshold) {
 					u64 elapsed_us = now_us - icsk->icsk_ack.iat_lrtime_us;
+					bool filter_expired = elapsed_us > 1000000;
 
-					if (elapsed_us > 1000000)
-						icsk->icsk_ack.iat_min_us += (icsk->icsk_ack.iat_min_us >> 3);  // +12%
-
-					icsk->icsk_ack.iat_min_us = min(icsk->icsk_ack.iat_min_us, iat_curr_us);
+					if (filter_expired || iat_curr_us < icsk->icsk_ack.iat_min_us) {
+						icsk->icsk_ack.iat_min_us = iat_curr_us;
+						icsk->icsk_ack.iat_lrtime_us = now_us;
+					}
 
 					u32 srtt_us = tp->srtt_us >> 3;
 					u32 srtt_clamped = min_t(u32, srtt_us, 100000);
