@@ -1041,14 +1041,9 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 						icsk->icsk_ack.iat_lrtime_us = now_us;
 					}
 
-					u32 srtt_us = tp->srtt_us >> 3;
-					u32 srtt_clamped = min_t(u32, srtt_us, 100000);
-					u32 beta = 120 + (u32)div_u64((u64)180 * srtt_clamped, 100000);
-					u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * beta, 10000);
-					// u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * 150, 10000);
-					// TODO 
+					u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * 150, 10000);
 					icsk->icsk_ack.ato = min_t(u32, usecs_to_jiffies(ato_us), (1UL << ATO_BITS) - 1);
-					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | iat_curr=%llu iat_min=%llu elapsed_us=%llu srtt=%u beta=%u ato_us=%llu ato_jiffies=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, icsk->icsk_ack.iat_min_us, elapsed_us, srtt_us, beta, ato_us, icsk->icsk_ack.ato);
+					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | iat_curr=%llu iat_min=%llu elapsed_us=%llu expired=%d ato_us=%llu ato_jiffies=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, icsk->icsk_ack.iat_min_us, elapsed_us, filter_expired, ato_us, icsk->icsk_ack.ato);
 				} else {
 					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | NOISE iat=%llu threshold=%llu\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, noise_threshold);
 				}
