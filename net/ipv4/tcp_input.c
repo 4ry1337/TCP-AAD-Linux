@@ -5984,6 +5984,18 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	comp_limit = false;
 	dup_ack = false;
 
+	#ifdef CONFIG_TCP_AAD
+	/* When TCP-AAD is active, suppress the two-segment rule so the
+	 * delayed ACK timer controls ACK timing at burst boundaries.
+	 * Safety: still ACK immediately if unacked bytes exceed half
+	 * the receive window to prevent sender stall. */
+	if (READ_ONCE(net->ipv4.sysctl_tcp_aad) && two_seg &&
+	    !quick && !ack_now) {
+		unsigned int unacked = tp->rcv_nxt - tp->rcv_wup;
+		if (unacked <= tp->rcv_wnd / 2)
+			two_seg = false;
+	}
+	#endif
 	if (two_seg || quick || ack_now) {
 		/* If we are running from __release_sock() in user context,
 		 * Defer the ack until tcp_release_cb().
