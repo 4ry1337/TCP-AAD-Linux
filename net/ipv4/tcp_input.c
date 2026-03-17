@@ -1046,7 +1046,7 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 					u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * beta, 10000);
 					// u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * 150, 10000);
 					// TODO 
-					icsk->icsk_ack.ato = clamp_val(usecs_to_jiffies(ato_us), 1, (1UL << ATO_BITS) - 1);
+					icsk->icsk_ack.ato = min_t(u32, usecs_to_jiffies(ato_us), (1UL << ATO_BITS) - 1);
 					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | iat_curr=%llu iat_min=%llu elapsed_us=%llu srtt=%u beta=%u ato_us=%llu ato_jiffies=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, icsk->icsk_ack.iat_min_us, elapsed_us, srtt_us, beta, ato_us, icsk->icsk_ack.ato);
 				} else {
 					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | NOISE iat=%llu threshold=%llu\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, noise_threshold);
