@@ -1034,16 +1034,25 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 
 				if (iat_curr_us >= noise_threshold) {
 					u64 elapsed_us = now_us - icsk->icsk_ack.iat_lrtime_us;
-					bool filter_expired = elapsed_us > 1000000;
 
-					if (filter_expired || iat_curr_us < icsk->icsk_ack.iat_min_us) {
-						icsk->icsk_ack.iat_min_us = iat_curr_us;
+					/* Unconditional reset every 1 second (Albert's approach).
+					 * This avoids locking in large inter-burst gaps as the new floor.
+					 */
+					if (elapsed_us > 1000000) {
+						pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | IAT_RESET old_iat_min=%llu\n",
+							now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, icsk->icsk_ack.iat_min_us);
+						icsk->icsk_ack.iat_min_us = U64_MAX;
 						icsk->icsk_ack.iat_lrtime_us = now_us;
+					}
+
+					/* Update iat_min if current sample is smaller */
+					if (iat_curr_us < icsk->icsk_ack.iat_min_us) {
+						icsk->icsk_ack.iat_min_us = iat_curr_us;
 					}
 
 					u64 ato_us = div_u64((icsk->icsk_ack.iat_min_us * 75 + iat_curr_us * 25) * 150, 10000);
 					icsk->icsk_ack.ato = min_t(u32, usecs_to_jiffies(ato_us), (1UL << ATO_BITS) - 1);
-					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | iat_curr=%llu iat_min=%llu elapsed_us=%llu expired=%d ato_us=%llu ato_jiffies=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, icsk->icsk_ack.iat_min_us, elapsed_us, filter_expired, ato_us, icsk->icsk_ack.ato);
+					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | iat_curr=%llu iat_min=%llu elapsed_us=%llu ato_us=%llu ato_jiffies=%u\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, icsk->icsk_ack.iat_min_us, elapsed_us, ato_us, icsk->icsk_ack.ato);
 				} else {
 					pr_debug("TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | NOISE iat=%llu threshold=%llu\n", now_us, sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, noise_threshold);
 				}
