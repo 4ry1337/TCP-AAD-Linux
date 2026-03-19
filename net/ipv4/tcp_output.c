@@ -4410,9 +4410,18 @@ void tcp_send_delayed_ack(struct sock *sk)
 				  ICSK_ACK_TIMER);
 		icsk->icsk_ack.aad_delack_active = 1;
 
-		/* sock_hold for the hrtimer callback's sock_put */
-		if (!hrtimer_is_queued(&tp->aad_delack_timer))
-			sock_hold(sk);
+		/* Take a fresh reference first, then cancel any pending
+		 * timer and release its old reference.  Holding first
+		 * prevents a transient refcount-zero.
+		 *
+		 * hrtimer_try_to_cancel returns:
+		 *   1 — was queued, cancelled: release old ref
+		 *   0 — not active (already fired or never armed)
+		 *  -1 — callback running: old callback owns its ref
+		 */
+		sock_hold(sk);
+		if (hrtimer_try_to_cancel(&tp->aad_delack_timer) == 1)
+			__sock_put(sk);
 
 		hrtimeout = ns_to_ktime(tcp_clock_ns() +
 					(u64)ato_us * NSEC_PER_USEC);
