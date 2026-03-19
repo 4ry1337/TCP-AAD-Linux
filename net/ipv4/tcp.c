@@ -1528,9 +1528,9 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 
 	if (inet_csk_ack_scheduled(sk)) {
 		const struct inet_connection_sock *icsk = inet_csk(sk);
-		bool one_mss_check;
+		bool mss_check;
 
-		one_mss_check =
+		mss_check =
 			/* Once-per-two-segments ACK was not sent by tcp_input.c */
 			tp->rcv_nxt - tp->rcv_wup > icsk->icsk_ack.rcv_mss;
 
@@ -1539,15 +1539,12 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 		 * ACK so the hrtimer controls ACK timing. Keep the safety
 		 * cap: ACK immediately if unacked bytes exceed 5 MSS.
 		 */
-		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad) &&
-		    one_mss_check) {
-			unsigned int unacked = tp->rcv_nxt - tp->rcv_wup;
+		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad) && mss_check &&
+		    tp->rcv_nxt - tp->rcv_wup <= icsk->icsk_ack.rcv_mss * 5)
+			mss_check = false;
 
-			if (unacked <= icsk->icsk_ack.rcv_mss * 5)
-				one_mss_check = false;
-		}
 #endif
-		if (one_mss_check ||
+		if (mss_check ||
 		    /*
 		     * If this read emptied read buffer, we send ACK, if
 		     * connection is not bidirectional, user drained

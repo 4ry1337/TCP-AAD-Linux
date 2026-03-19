@@ -6052,7 +6052,7 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	struct net *net = sock_net(sk);
 	unsigned long rtt;
 	u64 delay;
-	bool two_seg, quick, ack_now, comp_limit, dup_ack;
+	bool recv_segs, quick, ack_now, comp_limit, dup_ack;
 
 #ifdef CONFIG_TCP_AAD
 	if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
@@ -6074,9 +6074,9 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	}
 
 	/* === Immediate ACK Conditions === */
-	two_seg = (tp->rcv_nxt - tp->rcv_wup) > icsk->icsk_ack.rcv_mss &&
-		  (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat ||
-		   __tcp_select_window(sk) >= tp->rcv_wnd);
+	recv_segs = (tp->rcv_nxt - tp->rcv_wup) > icsk->icsk_ack.rcv_mss &&
+		    (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat ||
+		     __tcp_select_window(sk) >= tp->rcv_wnd);
 	quick = tcp_in_quickack_mode(sk);
 	ack_now = icsk->icsk_ack.pending & ICSK_ACK_NOW;
 	comp_limit = false;
@@ -6087,14 +6087,14 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	 * delayed ACK timer controls ACK timing at burst boundaries.
 	 * Safety: still ACK immediately if unacked bytes exceed 5 MSS
 	 * to prevent receive window shrinkage and sender stall. */
-	if (READ_ONCE(net->ipv4.sysctl_tcp_aad) && two_seg && !quick &&
+	if (READ_ONCE(net->ipv4.sysctl_tcp_aad) && recv_segs && !quick &&
 	    !ack_now) {
 		unsigned int unacked = tp->rcv_nxt - tp->rcv_wup;
 		if (unacked <= icsk->icsk_ack.rcv_mss * 5)
-			two_seg = false;
+			recv_segs = false;
 	}
 #endif
-	if (two_seg || quick || ack_now) {
+	if (recv_segs || quick || ack_now) {
 		/* If we are running from __release_sock() in user context,
 		 * Defer the ack until tcp_release_cb().
 		 */
@@ -6121,7 +6121,7 @@ send_now:
 		if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
 			pr_debug(
 				"TCP_AAD ACK_CHK sk=%p rcv_nxt=%u SEND_NOW reason=%s%s%s%s%s mss=%u quick=%u pingpong=%d pending=%x\n",
-				sk, tp->rcv_nxt, two_seg ? "six_segs " : "",
+				sk, tp->rcv_nxt, recv_segs ? "SIX_SEG " : "",
 				quick ? "QUICK " : "",
 				ack_now ? "ACK_NOW " : "",
 				comp_limit ? "COMP_LIMIT " : "",
@@ -6134,7 +6134,7 @@ send_now:
 		{
 			pr_debug(
 				"TCP_DACK ACK_CHK sk=%p rcv_nxt=%u SEND_NOW reason=%s%s%s%s%s mss=%u quick=%u pingpong=%d pending=%x\n",
-				sk, tp->rcv_nxt, two_seg ? "TWO_SEG " : "",
+				sk, tp->rcv_nxt, recv_segs ? "TWO_SEG " : "",
 				quick ? "QUICK " : "",
 				ack_now ? "ACK_NOW " : "",
 				comp_limit ? "COMP_LIMIT " : "",
