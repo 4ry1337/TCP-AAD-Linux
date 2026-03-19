@@ -768,6 +768,11 @@ void inet_csk_clear_xmit_timers_sync(struct sock *sk)
 	sk_stop_timer_sync(sk, &sk->tcp_retransmit_timer);
 	sk_stop_timer_sync(sk, &icsk->icsk_delack_timer);
 	sk_stop_timer_sync(sk, &icsk->icsk_keepalive_timer);
+
+#ifdef CONFIG_TCP_AAD
+	if (hrtimer_cancel(&tcp_sk(sk)->aad_delack_timer))
+		__sock_put(sk);
+#endif
 }
 
 struct dst_entry *inet_csk_route_req(const struct sock *sk,

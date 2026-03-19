@@ -777,6 +777,11 @@ static inline void tcp_clear_xmit_timers(struct sock *sk)
 	if (hrtimer_try_to_cancel(&tcp_sk(sk)->compressed_ack_timer) == 1)
 		__sock_put(sk);
 
+#ifdef CONFIG_TCP_AAD
+	if (hrtimer_try_to_cancel(&tcp_sk(sk)->aad_delack_timer) == 1)
+		__sock_put(sk);
+#endif
+
 	inet_csk_clear_xmit_timers(sk);
 }
 

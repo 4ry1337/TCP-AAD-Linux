@@ -4375,6 +4375,56 @@ void tcp_send_delayed_ack(struct sock *sk)
 	int ato = icsk->icsk_ack.ato;
 	unsigned long timeout;
 
+#ifdef CONFIG_TCP_AAD
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad) &&
+	    icsk->icsk_ack.ato_us > 0) {
+		/* TCP-AAD always-reschedule hrtimer path.
+		 * Each packet pushes the timer forward to now + ato_us.
+		 * No "keep earlier timeout" pinning.
+		 * No about-to-expire immediate send.
+		 * hrtimer_start overwrites any pending timer.
+		 */
+		struct tcp_sock *tp = tcp_sk(sk);
+		u32 ato_us = icsk->icsk_ack.ato_us;
+		u32 max_ato_us = USEC_PER_SEC / 2; /* HZ/2 = 500ms */
+		ktime_t hrtimeout;
+
+		/* Pingpong cap */
+		if (inet_csk_in_pingpong_mode(sk) ||
+		    (icsk->icsk_ack.pending & ICSK_ACK_PUSHED))
+			max_ato_us = jiffies_to_usecs(TCP_DELACK_MAX);
+
+		/* SRTT bound */
+		if (tp->srtt_us) {
+			u32 rtt_us = max_t(u32, tp->srtt_us >> 3,
+					   jiffies_to_usecs(TCP_DELACK_MIN));
+			if (rtt_us < max_ato_us)
+				max_ato_us = rtt_us;
+		}
+
+		ato_us = min(ato_us, max_ato_us);
+		ato_us = min_t(u32, ato_us, jiffies_to_usecs(tcp_delack_max(sk)));
+
+		smp_store_release(&icsk->icsk_ack.pending,
+				  icsk->icsk_ack.pending | ICSK_ACK_SCHED |
+				  ICSK_ACK_TIMER);
+		icsk->icsk_ack.aad_delack_active = 1;
+
+		/* sock_hold for the hrtimer callback's sock_put */
+		if (!hrtimer_is_queued(&tp->aad_delack_timer))
+			sock_hold(sk);
+
+		hrtimeout = ns_to_ktime(tcp_clock_ns() +
+					(u64)ato_us * NSEC_PER_USEC);
+		hrtimer_start(&tp->aad_delack_timer, hrtimeout,
+			      HRTIMER_MODE_ABS_PINNED_SOFT);
+
+		pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u ato_us=%u pingpong=%d\n",
+			 sk, tp->rcv_nxt, ato_us, inet_csk_in_pingpong_mode(sk));
+		return;
+	}
+#endif
+
 	if (ato > TCP_DELACK_MIN) {
 		const struct tcp_sock *tp = tcp_sk(sk);
 		int max_ato = HZ / 2;
@@ -4409,14 +4459,7 @@ void tcp_send_delayed_ack(struct sock *sk)
 	if (icsk->icsk_ack.pending & ICSK_ACK_TIMER) {
 		/* If delack timer is about to expire, send ACK now. */
 		if (time_before_eq(icsk_delack_timeout(icsk), jiffies + (ato >> 2))) {
-			#ifdef CONFIG_TCP_AAD
-			if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
-				pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u EARLY_SEND timer_about_to_expire\n", sk, tcp_sk(sk)->rcv_nxt);
-			} else 
-			#endif
-			{
-				pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u EARLY_SEND timer_about_to_expire\n", sk, tcp_sk(sk)->rcv_nxt);
-			}
+			pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u EARLY_SEND timer_about_to_expire\n", sk, tcp_sk(sk)->rcv_nxt);
 			tcp_send_ack(sk);
 			return;
 		}
@@ -4426,14 +4469,7 @@ void tcp_send_delayed_ack(struct sock *sk)
 	}
 	smp_store_release(&icsk->icsk_ack.pending,
 			  icsk->icsk_ack.pending | ICSK_ACK_SCHED | ICSK_ACK_TIMER);
-	#ifdef CONFIG_TCP_AAD
-	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
-		pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u ato_in=%d ato_final=%d timeout_ms=%u quick=%u pingpong=%d\n", sk, tcp_sk(sk)->rcv_nxt, icsk->icsk_ack.ato, ato, jiffies_to_msecs(timeout - jiffies), icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk));
-	} else
-	#endif
-	{
-		pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u ato_in=%d ato_final=%d timeout_ms=%u quick=%u pingpong=%d\n", sk, tcp_sk(sk)->rcv_nxt, icsk->icsk_ack.ato, ato, jiffies_to_msecs(timeout - jiffies), icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk));
-	}
+	pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u ato_in=%d ato_final=%d timeout_ms=%u quick=%u pingpong=%d\n", sk, tcp_sk(sk)->rcv_nxt, icsk->icsk_ack.ato, ato, jiffies_to_msecs(timeout - jiffies), icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk));
 	sk_reset_timer(sk, &icsk->icsk_delack_timer, timeout);
 }
 

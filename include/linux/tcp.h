@@ -431,6 +431,9 @@ struct tcp_sock {
 
 	struct hrtimer	pacing_timer;
 	struct hrtimer	compressed_ack_timer;
+#ifdef CONFIG_TCP_AAD
+	struct hrtimer	aad_delack_timer;
+#endif
 
 	struct sk_buff	*ooo_last_skb; /* cache rb_last(out_of_order_queue) */
 

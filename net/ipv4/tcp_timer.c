@@ -312,15 +312,6 @@ void tcp_delack_timer_handler(struct sock *sk)
 	if ((1 << sk->sk_state) & (TCPF_CLOSE | TCPF_LISTEN))
 		return;
 
-	#ifdef CONFIG_TCP_AAD
-	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
-		pr_debug("TCP_AAD TIMER_FIRED sk=%p rcv_nxt=%u pending=%x quick=%u\n", sk, tp->rcv_nxt, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
-	} else
-	#endif
-	{
-		pr_debug("TCP_DACK TIMER_FIRED sk=%p rcv_nxt=%u pending=%x quick=%u\n", sk, tp->rcv_nxt, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
-	}
-
 	/* Handling the sack compression case */
 	if (tp->compressed_ack) {
 		tcp_mstamp_refresh(tp);
@@ -331,6 +322,32 @@ void tcp_delack_timer_handler(struct sock *sk)
 	if (!(icsk->icsk_ack.pending & ICSK_ACK_TIMER))
 		return;
 
+#ifdef CONFIG_TCP_AAD
+	if (icsk->icsk_ack.aad_delack_active) {
+		/* TCP-AAD hrtimer path: no spurious-fire check needed,
+		 * no ATO inflation, no pingpong exit.
+		 * Check flag only (not sysctl) — sysctl controls arming,
+		 * flag controls handling. Safe on mid-connection sysctl toggle.
+		 */
+		pr_debug("TCP_AAD TIMER_FIRED sk=%p rcv_nxt=%u pending=%x quick=%u\n",
+			 sk, tp->rcv_nxt, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
+
+		icsk->icsk_ack.pending &= ~ICSK_ACK_TIMER;
+		icsk->icsk_ack.aad_delack_active = 0;
+
+		if (inet_csk_ack_scheduled(sk)) {
+			pr_debug("TCP_AAD TIMER_ACK sk=%p rcv_nxt=%u ato_us=%u\n",
+				 sk, tp->rcv_nxt, icsk->icsk_ack.ato_us);
+			tcp_mstamp_refresh(tp);
+			tcp_send_ack(sk);
+			__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKS);
+		}
+		return;
+	}
+#endif
+
+	pr_debug("TCP_DACK TIMER_FIRED sk=%p rcv_nxt=%u pending=%x quick=%u\n", sk, tp->rcv_nxt, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
+
 	if (time_after(icsk_delack_timeout(icsk), jiffies)) {
 		sk_reset_timer(sk, &icsk->icsk_delack_timer,
 			       icsk_delack_timeout(icsk));
@@ -339,14 +356,7 @@ void tcp_delack_timer_handler(struct sock *sk)
 	icsk->icsk_ack.pending &= ~ICSK_ACK_TIMER;
 
 	if (inet_csk_ack_scheduled(sk)) {
-		#ifdef CONFIG_TCP_AAD
-		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
-			pr_debug("TCP_AAD TIMER_ACK sk=%p rcv_nxt=%u ato_before=%u ato_after=%u pingpong=%d quick=%u\n", sk, tp->rcv_nxt, icsk->icsk_ack.ato, inet_csk_in_pingpong_mode(sk) ? TCP_ATO_MIN : min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto), inet_csk_in_pingpong_mode(sk), icsk->icsk_ack.quick);
-		} else
-		#endif
-		{
-			pr_debug("TCP_DACK TIMER_ACK sk=%p rcv_nxt=%u ato_before=%u ato_after=%u pingpong=%d quick=%u\n", sk, tp->rcv_nxt, icsk->icsk_ack.ato, inet_csk_in_pingpong_mode(sk) ? TCP_ATO_MIN : min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto), inet_csk_in_pingpong_mode(sk), icsk->icsk_ack.quick);
-		}
+		pr_debug("TCP_DACK TIMER_ACK sk=%p rcv_nxt=%u ato_before=%u ato_after=%u pingpong=%d quick=%u\n", sk, tp->rcv_nxt, icsk->icsk_ack.ato, inet_csk_in_pingpong_mode(sk) ? TCP_ATO_MIN : min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto), inet_csk_in_pingpong_mode(sk), icsk->icsk_ack.quick);
 		if (!inet_csk_in_pingpong_mode(sk)) {
 			/* Delayed ACK missed: inflate ATO. */
 			icsk->icsk_ack.ato = min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto);
@@ -907,6 +917,29 @@ static enum hrtimer_restart tcp_compressed_ack_kick(struct hrtimer *timer)
 	return HRTIMER_NORESTART;
 }
 
+#ifdef CONFIG_TCP_AAD
+static enum hrtimer_restart tcp_aad_delack_kick(struct hrtimer *timer)
+{
+	struct tcp_sock *tp = container_of(timer, struct tcp_sock,
+					   aad_delack_timer);
+	struct sock *sk = (struct sock *)tp;
+
+	bh_lock_sock(sk);
+	if (!sock_owned_by_user(sk)) {
+		tcp_delack_timer_handler(sk);
+	} else {
+		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);
+		if (!test_and_set_bit(TCP_DELACK_TIMER_DEFERRED,
+				      &sk->sk_tsq_flags))
+			sock_hold(sk);
+	}
+	bh_unlock_sock(sk);
+
+	sock_put(sk);
+	return HRTIMER_NORESTART;
+}
+#endif
+
 void tcp_init_xmit_timers(struct sock *sk)
 {
 	inet_csk_init_xmit_timers(sk, &tcp_write_timer, &tcp_delack_timer,
@@ -916,4 +949,9 @@ void tcp_init_xmit_timers(struct sock *sk)
 
 	hrtimer_setup(&tcp_sk(sk)->compressed_ack_timer, tcp_compressed_ack_kick, CLOCK_MONOTONIC,
 		      HRTIMER_MODE_REL_PINNED_SOFT);
+
+#ifdef CONFIG_TCP_AAD
+	hrtimer_setup(&tcp_sk(sk)->aad_delack_timer, tcp_aad_delack_kick,
+		      CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED_SOFT);
+#endif
 }
