@@ -96,16 +96,14 @@ int sysctl_tcp_max_orphans __read_mostly = NR_FILE;
 #define FLAG_ECE 0x40 /* ECE in this ACK				*/
 #define FLAG_LOST_RETRANS 0x80 /* This ACK marks some retransmission lost */
 #define FLAG_SLOWPATH 0x100 /* Do not skip RFC checks for window update.*/
-#define FLAG_ORIG_SACK_ACKED \
-	0x200 /* Never retransmitted data are (s)acked	*/
+#define FLAG_ORIG_SACK_ACKED 0x200 /* Never retransmitted data are (s)acked	*/
 #define FLAG_SND_UNA_ADVANCED \
 	0x400 /* Snd_una was changed (!= FLAG_DATA_ACKED) */
 #define FLAG_DSACKING_ACK 0x800 /* SACK blocks contained D-SACK info */
 #define FLAG_SET_XMIT_TIMER 0x1000 /* Set TLP or RTO timer */
 #define FLAG_SACK_RENEGING 0x2000 /* snd_una advanced to a sacked seq */
 #define FLAG_UPDATE_TS_RECENT 0x4000 /* tcp_replace_ts_recent() */
-#define FLAG_NO_CHALLENGE_ACK \
-	0x8000 /* do not call tcp_send_challenge_ack()	*/
+#define FLAG_NO_CHALLENGE_ACK 0x8000 /* do not call tcp_send_challenge_ack()	*/
 #define FLAG_ACK_MAYBE_DELAYED 0x10000 /* Likely a delayed ACK */
 #define FLAG_DSACK_TLP 0x20000 /* DSACK for tail loss probe */
 #define FLAG_TS_PROGRESS 0x40000 /* Positive timestamp delta */
@@ -1045,38 +1043,40 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 				icsk->icsk_ack.ato_us = 0;
 				icsk->icsk_ack.iat_min_us = U64_MAX;
 			} else {
-				u64 elapsed_us =
-					now_us - icsk->icsk_ack.iat_lrtime_us;
-
-				/* Unconditional reset every 1 second (Albert's approach).
-				 * This avoids locking in large inter-burst gaps as the new floor.
-				 */
-				if (elapsed_us > 1000000) {
-					pr_debug(
-						"TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | IAT_RESET old_iat_min=%llu\n",
-						now_us, sk,
-						TCP_SKB_CB(skb)->seq,
-						TCP_SKB_CB(skb)->end_seq,
-						icsk->icsk_ack.iat_min_us);
-					icsk->icsk_ack.iat_min_us = U64_MAX;
-					icsk->icsk_ack.iat_lrtime_us = now_us;
-				}
-
-				/* Update iat_min for any sample above ARQ floor (10us).
-				* Decoupled from noise threshold so intra-burst samples
-				* can correct iat_min after reset.
-				*/
-				if (iat_curr_us > 10 &&
-				    iat_curr_us < icsk->icsk_ack.iat_min_us) {
-					icsk->icsk_ack.iat_min_us = iat_curr_us;
-				}
-
 				u64 noise_threshold =
 					icsk->icsk_ack.iat_min_us != U64_MAX ?
 						icsk->icsk_ack.iat_min_us / 4 :
 						200; // 200us default until iat_min is established
 
 				if (iat_curr_us >= noise_threshold) {
+					u64 elapsed_us =
+						now_us -
+						icsk->icsk_ack.iat_lrtime_us;
+
+					/* Unconditional reset every 1 second (Albert's approach).
+					 * This avoids locking in large inter-burst gaps as the new floor.
+					 */
+					if (elapsed_us > 1000000) {
+						pr_debug(
+							"TCP_AAD RECV now_us=%llu sk=%p seq=%u end_seq=%u | IAT_RESET old_iat_min=%llu\n",
+							now_us, sk,
+							TCP_SKB_CB(skb)->seq,
+							TCP_SKB_CB(skb)->end_seq,
+							icsk->icsk_ack
+								.iat_min_us);
+						icsk->icsk_ack.iat_min_us =
+							U64_MAX;
+						icsk->icsk_ack.iat_lrtime_us =
+							now_us;
+					}
+
+					/* Update iat_min if current sample is smaller */
+					if (iat_curr_us <
+					    icsk->icsk_ack.iat_min_us) {
+						icsk->icsk_ack.iat_min_us =
+							iat_curr_us;
+					}
+
 					u64 ato_us = div_u64(
 						(icsk->icsk_ack.iat_min_us *
 							 75 +
