@@ -96,14 +96,16 @@ int sysctl_tcp_max_orphans __read_mostly = NR_FILE;
 #define FLAG_ECE 0x40 /* ECE in this ACK				*/
 #define FLAG_LOST_RETRANS 0x80 /* This ACK marks some retransmission lost */
 #define FLAG_SLOWPATH 0x100 /* Do not skip RFC checks for window update.*/
-#define FLAG_ORIG_SACK_ACKED 0x200 /* Never retransmitted data are (s)acked	*/
+#define FLAG_ORIG_SACK_ACKED \
+	0x200 /* Never retransmitted data are (s)acked	*/
 #define FLAG_SND_UNA_ADVANCED \
 	0x400 /* Snd_una was changed (!= FLAG_DATA_ACKED) */
 #define FLAG_DSACKING_ACK 0x800 /* SACK blocks contained D-SACK info */
 #define FLAG_SET_XMIT_TIMER 0x1000 /* Set TLP or RTO timer */
 #define FLAG_SACK_RENEGING 0x2000 /* snd_una advanced to a sacked seq */
 #define FLAG_UPDATE_TS_RECENT 0x4000 /* tcp_replace_ts_recent() */
-#define FLAG_NO_CHALLENGE_ACK 0x8000 /* do not call tcp_send_challenge_ack()	*/
+#define FLAG_NO_CHALLENGE_ACK \
+	0x8000 /* do not call tcp_send_challenge_ack()	*/
 #define FLAG_ACK_MAYBE_DELAYED 0x10000 /* Likely a delayed ACK */
 #define FLAG_DSACK_TLP 0x20000 /* DSACK for tail loss probe */
 #define FLAG_TS_PROGRESS 0x40000 /* Positive timestamp delta */
@@ -1044,9 +1046,7 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 				icsk->icsk_ack.iat_min_us = U64_MAX;
 			} else {
 				u64 noise_threshold =
-					icsk->icsk_ack.iat_min_us != U64_MAX ?
-						icsk->icsk_ack.iat_min_us / 4 :
-						200; // 200us default until iat_min is established
+					5; /* 5us: filters ARQ artifacts without discarding valid intra-burst gaps */
 
 				if (iat_curr_us >= noise_threshold) {
 					u64 elapsed_us =
@@ -1077,12 +1077,14 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 							iat_curr_us;
 					}
 
+					u8 alpha = READ_ONCE(
+						sock_net(sk)
+							->ipv4
+							.sysctl_tcp_aad_alpha);
 					u64 ato_us = div_u64(
-						(icsk->icsk_ack.iat_min_us *
-							 75 +
-						 iat_curr_us * 25) *
-							150,
-						10000);
+						icsk->icsk_ack.iat_min_us *
+							alpha,
+						10);
 					icsk->icsk_ack.ato_us = (u32)ato_us;
 					icsk->icsk_ack.ato = min_t(
 						u32, usecs_to_jiffies(ato_us),
@@ -6052,7 +6054,7 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	struct net *net = sock_net(sk);
 	unsigned long rtt;
 	u64 delay;
-	bool recv_segs, quick, ack_now, comp_limit, dup_ack;
+	bool two_segs, quick, ack_now, comp_limit, dup_ack;
 
 #ifdef CONFIG_TCP_AAD
 	if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
@@ -6074,9 +6076,9 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	}
 
 	/* === Immediate ACK Conditions === */
-	recv_segs = (tp->rcv_nxt - tp->rcv_wup) > icsk->icsk_ack.rcv_mss &&
-		    (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat ||
-		     __tcp_select_window(sk) >= tp->rcv_wnd);
+	two_segs = (tp->rcv_nxt - tp->rcv_wup) > icsk->icsk_ack.rcv_mss &&
+		   (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat ||
+		    __tcp_select_window(sk) >= tp->rcv_wnd);
 	quick = tcp_in_quickack_mode(sk);
 	ack_now = icsk->icsk_ack.pending & ICSK_ACK_NOW;
 	comp_limit = false;
@@ -6085,16 +6087,12 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 #ifdef CONFIG_TCP_AAD
 	/* When TCP-AAD is active, suppress the two-segment rule so the
 	 * delayed ACK timer controls ACK timing at burst boundaries.
-	 * Safety: still ACK immediately if unacked bytes exceed 5 MSS
-	 * to prevent receive window shrinkage and sender stall. */
-	if (READ_ONCE(net->ipv4.sysctl_tcp_aad) && recv_segs && !quick &&
-	    !ack_now) {
-		unsigned int unacked = tp->rcv_nxt - tp->rcv_wup;
-		if (unacked <= icsk->icsk_ack.rcv_mss * 5)
-			recv_segs = false;
+	 */
+	if (READ_ONCE(net->ipv4.sysctl_tcp_aad) && two_segs) {
+		two_segs = false;
 	}
 #endif
-	if (recv_segs || quick || ack_now) {
+	if (two_segs || quick || ack_now) {
 		/* If we are running from __release_sock() in user context,
 		 * Defer the ack until tcp_release_cb().
 		 */
@@ -6121,7 +6119,7 @@ send_now:
 		if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
 			pr_debug(
 				"TCP_AAD ACK_CHK sk=%p rcv_nxt=%u SEND_NOW reason=%s%s%s%s%s mss=%u quick=%u pingpong=%d pending=%x\n",
-				sk, tp->rcv_nxt, recv_segs ? "SIX_SEG " : "",
+				sk, tp->rcv_nxt, two_segs ? "TWO_SEG " : "",
 				quick ? "QUICK " : "",
 				ack_now ? "ACK_NOW " : "",
 				comp_limit ? "COMP_LIMIT " : "",
@@ -6134,7 +6132,7 @@ send_now:
 		{
 			pr_debug(
 				"TCP_DACK ACK_CHK sk=%p rcv_nxt=%u SEND_NOW reason=%s%s%s%s%s mss=%u quick=%u pingpong=%d pending=%x\n",
-				sk, tp->rcv_nxt, recv_segs ? "TWO_SEG " : "",
+				sk, tp->rcv_nxt, two_segs ? "TWO_SEG " : "",
 				quick ? "QUICK " : "",
 				ack_now ? "ACK_NOW " : "",
 				comp_limit ? "COMP_LIMIT " : "",

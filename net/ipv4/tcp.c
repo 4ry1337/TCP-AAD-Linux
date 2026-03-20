@@ -1525,38 +1525,41 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	bool time_to_ack = false;
+#ifdef CONFIG_TCP_AAD
+	const char *cleanup_reason = "unknown";
+#endif
 
 	if (inet_csk_ack_scheduled(sk)) {
 		const struct inet_connection_sock *icsk = inet_csk(sk);
-		bool mss_check;
+		bool two_segs;
 
-		mss_check =
+		two_segs =
 			/* Once-per-two-segments ACK was not sent by tcp_input.c */
 			tp->rcv_nxt - tp->rcv_wup > icsk->icsk_ack.rcv_mss;
 
 #ifdef CONFIG_TCP_AAD
-		/* When TCP-AAD is active, suppress the one-MSS window-update
-		 * ACK so the hrtimer controls ACK timing. Keep the safety
-		 * cap: ACK immediately if unacked bytes exceed 5 MSS.
+		/* When TCP-AAD is active, suppress the two segs window-update
+		 * ACK so the hrtimer controls ACK timing.
 		 */
-		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad) && mss_check &&
-		    tp->rcv_nxt - tp->rcv_wup <= icsk->icsk_ack.rcv_mss * 5)
-			mss_check = false;
+		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad) && two_segs)
+			two_segs = false;
 
 #endif
-		if (mss_check ||
-		    /*
-		     * If this read emptied read buffer, we send ACK, if
-		     * connection is not bidirectional, user drained
-		     * receive buffer and there was a small segment
-		     * in queue.
-		     */
-		    (copied > 0 &&
-		     ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED2) ||
-		      ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED) &&
-		       !inet_csk_in_pingpong_mode(sk))) &&
-		     !atomic_read(&sk->sk_rmem_alloc)))
+		if (two_segs) {
 			time_to_ack = true;
+#ifdef CONFIG_TCP_AAD
+			cleanup_reason = "two_segs";
+#endif
+		} else if (copied > 0 &&
+			   ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED2) ||
+			    ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED) &&
+			     !inet_csk_in_pingpong_mode(sk))) &&
+			   !atomic_read(&sk->sk_rmem_alloc)) {
+			time_to_ack = true;
+#ifdef CONFIG_TCP_AAD
+			cleanup_reason = "pushed_buf_empty";
+#endif
+		}
 	}
 
 	/* We send an ACK if we can now advertise a non-zero window
@@ -1577,16 +1580,21 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 			 * We can advertise it now, if it is not less than current one.
 			 * "Lots" means "at least twice" here.
 			 */
-			if (new_window && new_window >= 2 * rcv_window_now)
+			if (new_window && new_window >= 2 * rcv_window_now) {
 				time_to_ack = true;
+#ifdef CONFIG_TCP_AAD
+				cleanup_reason = "window_doubled";
+#endif
+			}
 		}
 	}
 	if (time_to_ack) {
 #ifdef CONFIG_TCP_AAD
 		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad))
 			pr_debug(
-				"TCP_AAD CLEANUP sk=%p rcv_nxt=%u bytes=%u mss=%u rcv_wnd=%u\n",
-				sk, tp->rcv_nxt, tp->rcv_nxt - tp->rcv_wup,
+				"TCP_AAD CLEANUP reason=%s sk=%p rcv_nxt=%u bytes=%u mss=%u rcv_wnd=%u\n",
+				cleanup_reason, sk, tp->rcv_nxt,
+				tp->rcv_nxt - tp->rcv_wup,
 				inet_csk(sk)->icsk_ack.rcv_mss, tp->rcv_wnd);
 		else
 #endif

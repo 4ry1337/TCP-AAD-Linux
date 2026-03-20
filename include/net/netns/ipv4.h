@@ -283,6 +283,7 @@ struct netns_ipv4 {
 #endif
 #ifdef CONFIG_TCP_AAD
 	u8 sysctl_tcp_aad;
+	u8 sysctl_tcp_aad_alpha;	/* alpha * 10, default 15 = 1.5 */
 #endif
 
 	struct fib_notifier_ops	*notifier_ops;
