@@ -4428,8 +4428,9 @@ void tcp_send_delayed_ack(struct sock *sk)
 		hrtimer_start(&tp->aad_delack_timer, hrtimeout,
 			      HRTIMER_MODE_ABS_PINNED_SOFT);
 
-		pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u ato_us=%u pingpong=%d\n",
-			 sk, tp->rcv_nxt, ato_us, inet_csk_in_pingpong_mode(sk));
+		pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | ato_us=%u pingpong=%d\n",
+			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
+			 ato_us, inet_csk_in_pingpong_mode(sk));
 		return;
 	}
 #endif
@@ -4530,7 +4531,9 @@ void tcp_send_ack(struct sock *sk)
 {
 	#ifdef CONFIG_TCP_AAD
 	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
-		pr_debug("TCP_AAD ACK_SENT sk=%p rcv_nxt=%u\n", sk, tcp_sk(sk)->rcv_nxt);
+		struct tcp_sock *tp = tcp_sk(sk);
+		pr_debug("TCP_AAD ACK_SENT sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u |\n",
+			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
 	} else 
 	#endif
 	{

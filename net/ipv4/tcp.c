@@ -1592,10 +1592,9 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 #ifdef CONFIG_TCP_AAD
 		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad))
 			pr_debug(
-				"TCP_AAD CLEANUP reason=%s sk=%p rcv_nxt=%u bytes=%u mss=%u rcv_wnd=%u\n",
-				cleanup_reason, sk, tp->rcv_nxt,
-				tp->rcv_nxt - tp->rcv_wup,
-				inet_csk(sk)->icsk_ack.rcv_mss, tp->rcv_wnd);
+				"TCP_AAD CLEANUP sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | reason=%s mss=%u\n",
+				sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
+				cleanup_reason, inet_csk(sk)->icsk_ack.rcv_mss);
 		else
 #endif
 			pr_debug(
