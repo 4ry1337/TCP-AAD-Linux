@@ -329,17 +329,15 @@ void tcp_delack_timer_handler(struct sock *sk)
 		 * Check flag only (not sysctl) — sysctl controls arming,
 		 * flag controls handling. Safe on mid-connection sysctl toggle.
 		 */
-		pr_debug("TCP_AAD TIMER_FIRED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | pending=%x quick=%u\n",
-			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
-			 icsk->icsk_ack.pending, icsk->icsk_ack.quick);
+		pr_debug("TCP_AAD TIMER_FIRED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
+			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
 
 		icsk->icsk_ack.pending &= ~ICSK_ACK_TIMER;
 		icsk->icsk_ack.aad_delack_active = 0;
 
 		if (inet_csk_ack_scheduled(sk)) {
-			pr_debug("TCP_AAD TIMER_ACK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | ato_us=%u\n",
-				 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
-				 icsk->icsk_ack.ato_us);
+			pr_debug("TCP_AAD TIMER_ACK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
+				 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
 			tcp_mstamp_refresh(tp);
 			tcp_send_ack(sk);
 			__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKS);
@@ -348,7 +346,8 @@ void tcp_delack_timer_handler(struct sock *sk)
 	}
 #endif
 
-	pr_debug("TCP_DACK TIMER_FIRED sk=%p rcv_nxt=%u pending=%x quick=%u\n", sk, tp->rcv_nxt, icsk->icsk_ack.pending, icsk->icsk_ack.quick);
+	pr_debug("TCP_DACK TIMER_FIRED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
+		 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
 
 	if (time_after(icsk_delack_timeout(icsk), jiffies)) {
 		sk_reset_timer(sk, &icsk->icsk_delack_timer,
@@ -358,7 +357,8 @@ void tcp_delack_timer_handler(struct sock *sk)
 	icsk->icsk_ack.pending &= ~ICSK_ACK_TIMER;
 
 	if (inet_csk_ack_scheduled(sk)) {
-		pr_debug("TCP_DACK TIMER_ACK sk=%p rcv_nxt=%u ato_before=%u ato_after=%u pingpong=%d quick=%u\n", sk, tp->rcv_nxt, icsk->icsk_ack.ato, inet_csk_in_pingpong_mode(sk) ? TCP_ATO_MIN : min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto), inet_csk_in_pingpong_mode(sk), icsk->icsk_ack.quick);
+		pr_debug("TCP_DACK TIMER_ACK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
+			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
 		if (!inet_csk_in_pingpong_mode(sk)) {
 			/* Delayed ACK missed: inflate ATO. */
 			icsk->icsk_ack.ato = min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto);
@@ -956,4 +956,5 @@ void tcp_init_xmit_timers(struct sock *sk)
 	hrtimer_setup(&tcp_sk(sk)->aad_delack_timer, tcp_aad_delack_kick,
 		      CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED_SOFT);
 #endif
+
 }

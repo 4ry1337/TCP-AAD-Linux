@@ -4428,9 +4428,9 @@ void tcp_send_delayed_ack(struct sock *sk)
 		hrtimer_start(&tp->aad_delack_timer, hrtimeout,
 			      HRTIMER_MODE_ABS_PINNED_SOFT);
 
-		pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | ato_us=%u pingpong=%d\n",
+		pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | ato_in_us=%u ato_us=%u\n",
 			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
-			 ato_us, inet_csk_in_pingpong_mode(sk));
+			 icsk->icsk_ack.ato_us, ato_us);
 		return;
 	}
 #endif
@@ -4469,7 +4469,9 @@ void tcp_send_delayed_ack(struct sock *sk)
 	if (icsk->icsk_ack.pending & ICSK_ACK_TIMER) {
 		/* If delack timer is about to expire, send ACK now. */
 		if (time_before_eq(icsk_delack_timeout(icsk), jiffies + (ato >> 2))) {
-			pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u EARLY_SEND timer_about_to_expire\n", sk, tcp_sk(sk)->rcv_nxt);
+			struct tcp_sock *tp = tcp_sk(sk);
+			pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | EARLY_SEND\n",
+				 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
 			tcp_send_ack(sk);
 			return;
 		}
@@ -4479,7 +4481,10 @@ void tcp_send_delayed_ack(struct sock *sk)
 	}
 	smp_store_release(&icsk->icsk_ack.pending,
 			  icsk->icsk_ack.pending | ICSK_ACK_SCHED | ICSK_ACK_TIMER);
-	pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u ato_in=%d ato_final=%d timeout_ms=%u quick=%u pingpong=%d\n", sk, tcp_sk(sk)->rcv_nxt, icsk->icsk_ack.ato, ato, jiffies_to_msecs(timeout - jiffies), icsk->icsk_ack.quick, inet_csk_in_pingpong_mode(sk));
+	pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | ato_in=%d ato_final=%d timeout_ms=%u\n",
+		 sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd,
+		 tcp_sk(sk)->rcv_ssthresh, icsk->icsk_ack.ato, ato,
+		 jiffies_to_msecs(timeout - jiffies));
 	sk_reset_timer(sk, &icsk->icsk_delack_timer, timeout);
 }
 
@@ -4530,15 +4535,13 @@ EXPORT_SYMBOL_GPL(__tcp_send_ack);
 void tcp_send_ack(struct sock *sk)
 {
 	#ifdef CONFIG_TCP_AAD
-	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
-		struct tcp_sock *tp = tcp_sk(sk);
-		pr_debug("TCP_AAD ACK_SENT sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u |\n",
-			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
-	} else 
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) 
+		pr_debug("TCP_AAD ACK_SENT sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
+			 sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd, tcp_sk(sk)->rcv_ssthresh);
+	else
 	#endif
-	{
-		pr_debug("TCP_DACK ACK_SENT sk=%p rcv_nxt=%u\n", sk, tcp_sk(sk)->rcv_nxt);
-	}
+		pr_debug("TCP_DACK ACK_SENT sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
+			 sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd, tcp_sk(sk)->rcv_ssthresh);
 	__tcp_send_ack(sk, tcp_sk(sk)->rcv_nxt, 0);
 }
 

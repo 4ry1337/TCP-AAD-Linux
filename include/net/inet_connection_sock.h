@@ -130,6 +130,7 @@ struct inet_connection_sock {
 		__u32 ato_us;		 /* ATO in microseconds for hrtimer path */
 		__u8  aad_delack_active; /* 1 if aad hrtimer is active delack   */
 #endif
+
 	} icsk_ack;
 	struct {
 		/* Range of MTUs to search */

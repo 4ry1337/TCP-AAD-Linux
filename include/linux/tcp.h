@@ -431,6 +431,7 @@ struct tcp_sock {
 
 	struct hrtimer	pacing_timer;
 	struct hrtimer	compressed_ack_timer;
+
 #ifdef CONFIG_TCP_AAD
 	struct hrtimer	aad_delack_timer;
 #endif
