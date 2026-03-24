@@ -1527,7 +1527,7 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 #endif
 		    ) {
 			time_to_ack = true;
-			rbuf_outcome = "SEND_NOW TWO_SEG";
+			rbuf_outcome = "RBUF_TWO_SEG";
 		} else if (copied > 0 && !atomic_read(&sk->sk_rmem_alloc)) {
 			/*
 			 * If this read emptied read buffer, we send ACK, if
@@ -1537,11 +1537,11 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 			 */
 			if (icsk->icsk_ack.pending & ICSK_ACK_PUSHED2) {
 				time_to_ack = true;
-				rbuf_outcome = "SEND_NOW PUSHED2";
+				rbuf_outcome = "RBUF_PUSH2";
 			} else if ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED) &&
 				   !inet_csk_in_pingpong_mode(sk)) {
 				time_to_ack = true;
-				rbuf_outcome = "SEND_NOW PUSHED";
+				rbuf_outcome = "RBUF_PUSH1";
 			}
 		}
 	}
@@ -1566,19 +1566,19 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 			 */
 			if (new_window && new_window >= 2 * rcv_window_now) {
 				time_to_ack = true;
-				rbuf_outcome = "SEND_NOW WINDOW_OPEN";
+				rbuf_outcome = "RBUF_WINDOW";
 			}
 		}
 	}
-#ifdef CONFIG_TCP_AAD
-	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad))
-		pr_debug("TCP_AAD RBUF_CLN sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | %s\n",
-			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh, rbuf_outcome);
-	else
-#endif
-		pr_debug("TCP_DACK RBUF_CLN sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | %s\n",
-			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh, rbuf_outcome);
 	if (time_to_ack) {
+#ifdef CONFIG_TCP_AAD
+		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
+			pr_debug("TCP_AAD RBUF_CLN sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | %s\n",
+				 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh, rbuf_outcome);
+		} else
+#endif
+			pr_debug("TCP_DACK RBUF_CLN sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | %s\n",
+				 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh, rbuf_outcome);
 		tcp_mstamp_refresh(tp);
 		tcp_send_ack(sk);
 	}

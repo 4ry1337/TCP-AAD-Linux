@@ -6036,18 +6036,18 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 		if (sock_owned_by_user_nocheck(sk) &&
 		    READ_ONCE(net->ipv4.sysctl_tcp_backlog_ack_defer)) {
 			set_bit(TCP_ACK_DEFERRED, &sk->sk_tsq_flags);
-			ack_snd_outcome = "DEFERRED";
+			ack_snd_outcome = "ACK_DEFERRED";
 			goto result;
 		}
 		if (two_segs) {
 			if (rcvlowat_cond && window_cond)
-				ack_snd_outcome = "SEND_NOW TWO_SEG_RCVLOWAT+WINDOW";
+				ack_snd_outcome = "ACK_2SEG_BOTH";
 			else if (rcvlowat_cond)
-				ack_snd_outcome = "SEND_NOW TWO_SEG_RCVLOWAT";
+				ack_snd_outcome = "ACK_2SEG_LOWAT";
 			else
-				ack_snd_outcome = "SEND_NOW TWO_SEG_WINDOW";
-		} else if (quick) ack_snd_outcome = "SEND_NOW QUICK";
-		else if (ack_now) ack_snd_outcome = "SEND_NOW ACK_NOW";
+				ack_snd_outcome = "ACK_2SEG_WIN";
+		} else if (quick) ack_snd_outcome = "ACK_QUICK";
+		else if (ack_now) ack_snd_outcome = "ACK_NOW";
 send_now:
 		tcp_send_ack(sk);
 		goto result;
@@ -6059,13 +6059,13 @@ send_now:
 			tp->aad_delayed_segs++;
 #endif
 		tcp_send_delayed_ack(sk);
-		ack_snd_outcome = "DELAYED";
+		ack_snd_outcome = "ACK_DELAYED";
 		goto result;
 	}
 
 	if (!tcp_is_sack(tp) ||
 	    tp->compressed_ack >= READ_ONCE(net->ipv4.sysctl_tcp_comp_sack_nr)) {
-		ack_snd_outcome = "SEND_NOW COMP_LIMIT";
+		ack_snd_outcome = "ACK_COMP_LIMIT";
 		goto send_now;
 	}
 
@@ -6075,12 +6075,12 @@ send_now:
 	}
 	if (tp->dup_ack_counter < TCP_FASTRETRANS_THRESH) {
 		tp->dup_ack_counter++;
-		ack_snd_outcome = "SEND_NOW DUP_ACK";
+		ack_snd_outcome = "ACK_DUP";
 		goto send_now;
 	}
 	tp->compressed_ack++;
 
-	ack_snd_outcome = "COMPRESSED";
+	ack_snd_outcome = "ACK_COMPRESSED";
 
 	if (hrtimer_is_queued(&tp->compressed_ack_timer)) {
 		goto result;
@@ -6121,19 +6121,6 @@ result:
 static inline void tcp_ack_snd_check(struct sock *sk)
 {
 	if (!inet_csk_ack_scheduled(sk)) {
-/* We sent a data segment already. */
-#ifdef CONFIG_TCP_AAD
-		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad))
-			pr_debug(
-				"TCP_AAD ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | SKIP\n",
-				sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd,
-				tcp_sk(sk)->rcv_ssthresh);
-		else
-#endif
-			pr_debug(
-				"TCP_DACK ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | SKIP\n",
-				sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd,
-				tcp_sk(sk)->rcv_ssthresh);
 		/* We sent a data segment already. */
 		return;
 	}
