@@ -62,6 +62,7 @@
  *		Pasi Sarolahti:		F-RTO for dealing with spurious RTOs
  */
 
+#include "asm-generic/rwonce.h"
 #define pr_fmt(fmt) "TCP: " fmt
 
 #include <linux/mm.h>
@@ -326,7 +327,14 @@ static void tcp_enter_quickack_mode(struct sock *sk, unsigned int max_quickacks)
 
 	tcp_incr_quickack(sk, max_quickacks);
 	inet_csk_exit_pingpong_mode(sk);
-	icsk->icsk_ack.ato = TCP_ATO_MIN;
+#ifdef CONFIG_TCP_AAD
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
+		icsk->icsk_ack.ato_us = jiffies_to_usecs(TCP_ATO_MIN);
+	} else 
+#endif
+	{
+		icsk->icsk_ack.ato = TCP_ATO_MIN;
+	}
 }
 
 /* Send ACKs quickly, if "quick" count is not exhausted
@@ -1000,6 +1008,9 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	u32 now;
+#ifdef CONFIG_TCP_AAD
+	u64 now_us;
+#endif
 
 	inet_csk_schedule_ack(sk);
 
@@ -1008,11 +1019,14 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 	tcp_rcv_rtt_measure(tp);
 
 	now = tcp_jiffies32;
+#ifdef CONFIG_TCP_AAD
+	now_us = tcp_clock_us();
+#endif
 
 #ifdef CONFIG_TCP_AAD
 	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
-		u64 now_us = tcp_clock_us();
-		if (!icsk->icsk_ack.ato) {
+		u64 iat_curr_us = now_us - icsk->icsk_ack.lrcvtime_us;
+		if (!icsk->icsk_ack.ato_us) {
 			/* The _first_ data packet received, initialize
 			 * delayed ACK engine.
 			 */
@@ -1022,90 +1036,45 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 				tp->rcv_ssthresh, now_us, TCP_SKB_CB(skb)->seq,
 				TCP_SKB_CB(skb)->end_seq);
 			tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
-			icsk->icsk_ack.ato = TCP_ATO_MIN;
-			icsk->icsk_ack.ato_us = 0;
-			icsk->icsk_ack.iat_min_us = U64_MAX;
+			icsk->icsk_ack.ato_us = jiffies_to_usecs(TCP_ATO_MIN);
+			icsk->icsk_ack.iat_min_us = iat_curr_us;
 		} else {
-			u64 iat_curr_us = now_us - icsk->icsk_ack.lrcvtime_us;
-			if (iat_curr_us > jiffies_to_usecs(icsk->icsk_rto)) {
-				//--- Stall detection ---
-				pr_debug(
-					"TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | STALL now_us=%llu seq=%u end_seq=%u iat=%llu rto=%u\n",
-					sk, tp->rcv_nxt, tp->rcv_wup,
-					tp->rcv_wnd, tp->rcv_ssthresh, now_us,
-					TCP_SKB_CB(skb)->seq,
-					TCP_SKB_CB(skb)->end_seq, iat_curr_us,
-					jiffies_to_usecs(icsk->icsk_rto));
+			if (iat_curr_us <= 5) {
+				/* 5us: filters ARQ artifacts without discarding valid intra-burst gaps */
+				pr_debug("TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | NOISE now_us=%llu seq=%u end_seq=%u iat_curr=%llu\n",
+					sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
+					now_us, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us);
+			} else if (iat_curr_us < icsk->icsk_ack.ato_us) {
+				/* inter-gap but what if single packet not  aggregation */
+				// u64 elapsed_us = now_us - icsk->icsk_ack.iat_lrtime_us;
+				//
+				// if (elapsed_us > 1000000) {
+				// 	pr_debug("TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | IAT_RESET now_us=%llu seq=%u end_seq=%u old_iat_min=%llu\n",
+				// 		sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
+				// 		now_us, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq,
+				// 		icsk->icsk_ack.iat_min_us);
+				// 	icsk->icsk_ack.iat_min_us = U64_MAX;
+				// 	icsk->icsk_ack.iat_lrtime_us = now_us;
+				// }
+
+				icsk->icsk_ack.iat_min_us = div_u64( 90 * icsk->icsk_ack.iat_min_us + 10 * iat_curr_us , 100);
+
+				u8 alpha = READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad_alpha);
+
+				u64 ato_us = div_u64(icsk->icsk_ack.iat_min_us * alpha, 10);
+
+				icsk->icsk_ack.ato_us = (u32)ato_us;
+
+				pr_debug("TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | UPDATE now_us=%llu seq=%u end_seq=%u iat_curr=%llu iat_min=%llu ato_us=%llu\n",
+					sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
+					now_us, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us,
+					icsk->icsk_ack.iat_min_us, ato_us);
+			} else if (iat_curr_us > jiffies_to_usecs(icsk->icsk_rto)) {
+				pr_debug("TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | STALL now_us=%llu seq=%u end_seq=%u iat_curr=%llu rto=%u\n",
+					sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh, now_us,
+					TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, jiffies_to_usecs(icsk->icsk_rto));
 				tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
-				icsk->icsk_ack.ato_us = 0;
-				icsk->icsk_ack.iat_min_us = U64_MAX;
-			} else {
-				u64 noise_threshold =
-					5; /* 5us: filters ARQ artifacts without discarding valid intra-burst gaps */
-
-				if (iat_curr_us >= noise_threshold) {
-					u64 elapsed_us =
-						now_us -
-						icsk->icsk_ack.iat_lrtime_us;
-
-					/* Unconditional reset every 1 second (Albert's approach).
-					 * This avoids locking in large inter-burst gaps as the new floor.
-					 */
-					if (elapsed_us > 1000000) {
-						pr_debug(
-							"TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | IAT_RESET now_us=%llu seq=%u end_seq=%u old_iat_min=%llu\n",
-							sk, tp->rcv_nxt,
-							tp->rcv_wup,
-							tp->rcv_wnd,
-							tp->rcv_ssthresh,
-							now_us,
-							TCP_SKB_CB(skb)->seq,
-							TCP_SKB_CB(skb)->end_seq,
-							icsk->icsk_ack
-								.iat_min_us);
-						icsk->icsk_ack.iat_min_us =
-							U64_MAX;
-						icsk->icsk_ack.iat_lrtime_us =
-							now_us;
-					}
-
-					/* Update iat_min if current sample is smaller */
-					if (iat_curr_us <
-					    icsk->icsk_ack.iat_min_us) {
-						icsk->icsk_ack.iat_min_us =
-							iat_curr_us;
-					}
-
-					u8 alpha = READ_ONCE(
-						sock_net(sk)
-							->ipv4
-							.sysctl_tcp_aad_alpha);
-					u64 ato_us = div_u64(
-						icsk->icsk_ack.iat_min_us *
-							alpha,
-						10);
-					icsk->icsk_ack.ato_us = (u32)ato_us;
-					icsk->icsk_ack.ato = min_t(
-						u32, usecs_to_jiffies(ato_us),
-						(1UL << ATO_BITS) - 1);
-					pr_debug(
-						"TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | UPDATE now_us=%llu seq=%u end_seq=%u iat_curr=%llu iat_min=%llu elapsed_us=%llu ato_us=%llu\n",
-						sk, tp->rcv_nxt, tp->rcv_wup,
-						tp->rcv_wnd, tp->rcv_ssthresh,
-						now_us, TCP_SKB_CB(skb)->seq,
-						TCP_SKB_CB(skb)->end_seq,
-						iat_curr_us,
-						icsk->icsk_ack.iat_min_us,
-						elapsed_us, ato_us);
-				} else {
-					pr_debug(
-						"TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | NOISE now_us=%llu seq=%u end_seq=%u iat=%llu\n",
-						sk, tp->rcv_nxt, tp->rcv_wup,
-						tp->rcv_wnd, tp->rcv_ssthresh,
-						now_us, TCP_SKB_CB(skb)->seq,
-						TCP_SKB_CB(skb)->end_seq,
-						iat_curr_us);
-				}
+				icsk->icsk_ack.iat_min_us = iat_curr_us;
 			}
 		}
 		icsk->icsk_ack.lrcvtime_us = now_us;
@@ -6036,26 +6005,23 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	unsigned long rtt;
 	u64 delay;
 
-	bool two_segs, quick, ack_now, comp_limit, dup_ack;
+	const char *ack_snd_outcome = "UNKNOWN";
+
+	bool two_segs, quick, ack_now, rcvlowat_cond, window_cond;
 	two_segs = (tp->rcv_nxt - tp->rcv_wup) > inet_csk(sk)->icsk_ack.rcv_mss;
 	quick = tcp_in_quickack_mode(sk);
 	ack_now = inet_csk(sk)->icsk_ack.pending & ICSK_ACK_NOW;
-	comp_limit = false;
-	dup_ack = false;
+	rcvlowat_cond = (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat);
+	window_cond = (__tcp_select_window(sk) >= tp->rcv_wnd);
 
 	    /* More than one full frame received... */
-	if (((two_segs 
-    #ifdef CONFIG_TCP_AAD 
-      &&  !READ_ONCE(net->ipv4.sysctl_tcp_aad)
-    #endif
-  ) &&
+	if ((two_segs &&
 	     /* ... and right edge of window advances far enough.
 	      * (tcp_recvmsg() will send ACK otherwise).
 	      * If application uses SO_RCVLOWAT, we want send ack now if
 	      * we have not received enough bytes to satisfy the condition.
 	      */
-	    (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat ||
-	     __tcp_select_window(sk) >= tp->rcv_wnd)) ||
+	    (rcvlowat_cond || window_cond)) ||
 	    /* We ACK each frame or... */
 	    quick ||
 	    /* Protocol state mandates a one-time immediate ACK */
@@ -6065,64 +6031,39 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 		 */
 		if (sock_owned_by_user_nocheck(sk) &&
 		    READ_ONCE(net->ipv4.sysctl_tcp_backlog_ack_defer)) {
-#ifdef CONFIG_TCP_AAD
-			if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) {
-				pr_debug(
-					"TCP_AAD ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | DEFERRED\n",
-					sk, tp->rcv_nxt, tp->rcv_wup,
-					tp->rcv_wnd, tp->rcv_ssthresh);
-			} else
-#endif
-			{
-				pr_debug(
-					"TCP_DACK ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | DEFERRED\n",
-					sk, tp->rcv_nxt, tp->rcv_wup,
-					tp->rcv_wnd, tp->rcv_ssthresh);
-			}
 			set_bit(TCP_ACK_DEFERRED, &sk->sk_tsq_flags);
-			return;
+			ack_snd_outcome = "DEFERRED";
+			goto result;
 		}
+		if (two_segs) {
+			if (rcvlowat_cond && window_cond)
+				ack_snd_outcome = "SEND_NOW TWO_SEG_RCVLOWAT+WINDOW";
+			else if (rcvlowat_cond)
+				ack_snd_outcome = "SEND_NOW TWO_SEG_RCVLOWAT";
+			else
+				ack_snd_outcome = "SEND_NOW TWO_SEG_WINDOW";
+		} else if (quick) ack_snd_outcome = "SEND_NOW QUICK";
+		else if (ack_now) ack_snd_outcome = "SEND_NOW ACK_NOW";
 send_now:
-#ifdef CONFIG_TCP_AAD
-		if (READ_ONCE(net->ipv4.sysctl_tcp_aad))
-			pr_debug(
-				"TCP_AAD ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | SEND_NOW two_seg=%d quick=%d ack_now=%d comp_limit=%d dup_ack=%d\n",
-				sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd,
-				tp->rcv_ssthresh,
-				two_segs, quick, ack_now, comp_limit, dup_ack);
-		else
-#endif
-			pr_debug(
-				"TCP_DACK ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | SEND_NOW two_seg=%d quick=%d ack_now=%d comp_limit=%d dup_ack=%d\n",
-				sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd,
-				tp->rcv_ssthresh,
-				two_segs, quick, ack_now, comp_limit, dup_ack);
 		tcp_send_ack(sk);
-		return;
+		goto result;
 	}
 
 	if (!ofo_possible || RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
 #ifdef CONFIG_TCP_AAD
-		if (READ_ONCE(net->ipv4.sysctl_tcp_aad)) 
-			pr_debug(
-				"TCP_AAD ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | DELAYED\n",
-				sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd,
-				tp->rcv_ssthresh);
-		else
+		if(READ_ONCE(net->ipv4.sysctl_tcp_aad))
+			tp->aad_delayed_segs++;
 #endif
-			pr_debug(
-				"TCP_DACK ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | DELAYED\n",
-				sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd,
-				tp->rcv_ssthresh);
 		tcp_send_delayed_ack(sk);
-		return;
+		ack_snd_outcome = "DELAYED";
+		goto result;
 	}
 
 	if (!tcp_is_sack(tp) ||
 	    tp->compressed_ack >= READ_ONCE(net->ipv4.sysctl_tcp_comp_sack_nr)) {
-		comp_limit = true;
+		ack_snd_outcome = "SEND_NOW COMP_LIMIT";
 		goto send_now;
-  }
+	}
 
 	if (tp->compressed_ack_rcv_nxt != tp->rcv_nxt) {
 		tp->compressed_ack_rcv_nxt = tp->rcv_nxt;
@@ -6130,12 +6071,16 @@ send_now:
 	}
 	if (tp->dup_ack_counter < TCP_FASTRETRANS_THRESH) {
 		tp->dup_ack_counter++;
-		dup_ack = true;
+		ack_snd_outcome = "SEND_NOW DUP_ACK";
 		goto send_now;
 	}
 	tp->compressed_ack++;
-	if (hrtimer_is_queued(&tp->compressed_ack_timer))
-		return;
+
+	ack_snd_outcome = "COMPRESSED";
+
+	if (hrtimer_is_queued(&tp->compressed_ack_timer)) {
+		goto result;
+	}
 
 	/* compress ack timer : comp_sack_rtt_percent of rtt,
 	 * but no more than tcp_comp_sack_delay_ns.
@@ -6154,24 +6099,19 @@ send_now:
 
 	delay = min(delay, READ_ONCE(net->ipv4.sysctl_tcp_comp_sack_delay_ns));
 
-#ifdef CONFIG_TCP_AAD
-	if (READ_ONCE(net->ipv4.sysctl_tcp_aad))
-		pr_debug(
-			"TCP_AAD ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | COMPRESSED compressed_ack=%u delay_us=%llu\n",
-			sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd,
-			tp->rcv_ssthresh, tp->compressed_ack,
-			(u64)delay / NSEC_PER_USEC);
-	else
-#endif
-		pr_debug(
-			"TCP_DACK ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | COMPRESSED compressed_ack=%u delay_us=%llu\n",
-			sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd,
-			tp->rcv_ssthresh, tp->compressed_ack,
-			(u64)delay / NSEC_PER_USEC);
 	sock_hold(sk);
 	hrtimer_start_range_ns(&tp->compressed_ack_timer, ns_to_ktime(delay),
 			       READ_ONCE(net->ipv4.sysctl_tcp_comp_sack_slack_ns),
 			       HRTIMER_MODE_REL_PINNED_SOFT);
+result:
+#ifdef CONFIG_TCP_AAD
+	if (READ_ONCE(net->ipv4.sysctl_tcp_aad))
+		pr_debug("TCP_AAD ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | %s\n",
+			sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh, ack_snd_outcome);
+	else
+#endif
+		pr_debug("TCP_DACK ACK_CHK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | %s\n",
+			sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh, ack_snd_outcome);
 }
 
 static inline void tcp_ack_snd_check(struct sock *sk)

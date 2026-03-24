@@ -35,6 +35,7 @@
  *
  */
 
+#include "linux/hrtimer.h"
 #define pr_fmt(fmt) "TCP: " fmt
 
 #include <net/tcp.h>
@@ -4372,120 +4373,108 @@ u32 tcp_delack_max(const struct sock *sk)
 void tcp_send_delayed_ack(struct sock *sk)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
-	int ato = icsk->icsk_ack.ato;
-	unsigned long timeout;
-
 #ifdef CONFIG_TCP_AAD
-	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad) &&
-	    icsk->icsk_ack.ato_us > 0) {
-		/* TCP-AAD always-reschedule hrtimer path.
-		 * Each packet pushes the timer forward to now + ato_us.
-		 * No "keep earlier timeout" pinning.
-		 * No about-to-expire immediate send.
-		 * hrtimer_start overwrites any pending timer.
-		 */
-		struct tcp_sock *tp = tcp_sk(sk);
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
 		u32 ato_us = icsk->icsk_ack.ato_us;
-		u32 max_ato_us = USEC_PER_SEC / 2; /* HZ/2 = 500ms */
-		ktime_t hrtimeout;
+		ktime_t timeout_us;
+		if (icsk->icsk_ack.ato_us > 5) {
+			const struct tcp_sock *tp = tcp_sk(sk);
+			u32 max_ato_us = USEC_PER_SEC / 2;
 
-		/* Pingpong cap */
-		if (inet_csk_in_pingpong_mode(sk) ||
-		    (icsk->icsk_ack.pending & ICSK_ACK_PUSHED))
-			max_ato_us = jiffies_to_usecs(TCP_DELACK_MAX);
+			if (inet_csk_in_pingpong_mode(sk) ||
+			    (icsk->icsk_ack.pending & ICSK_ACK_PUSHED))
+				max_ato_us = jiffies_to_usecs(TCP_DELACK_MAX);
 
-		/* SRTT bound */
-		if (tp->srtt_us) {
-			u32 rtt_us = max_t(u32, tp->srtt_us >> 3,
-					   jiffies_to_usecs(TCP_DELACK_MIN));
-			if (rtt_us < max_ato_us)
-				max_ato_us = rtt_us;
+			/* Slow path, intersegment interval is "high". */
+
+			/* If some rtt estimate is known, use it to bound delayed ack.
+			 * Do not use inet_csk(sk)->icsk_rto here, use results of rtt measurements
+			 * directly.
+			 */
+			if (tp->srtt_us) {
+				u32 rtt_us = max_t(u32, tp->srtt_us >> 3,
+						   jiffies_to_usecs(TCP_DELACK_MIN));
+				if (rtt_us < max_ato_us)
+					max_ato_us = rtt_us;
+			}
+
+			ato_us = min(ato_us, max_ato_us);
 		}
-
-		ato_us = min(ato_us, max_ato_us);
 		ato_us = min_t(u32, ato_us, jiffies_to_usecs(tcp_delack_max(sk)));
+		timeout_us = ns_to_ktime((u64)ato_us * NSEC_PER_USEC);
 
 		smp_store_release(&icsk->icsk_ack.pending,
-				  icsk->icsk_ack.pending | ICSK_ACK_SCHED |
-				  ICSK_ACK_TIMER);
-		icsk->icsk_ack.aad_delack_active = 1;
+				  icsk->icsk_ack.pending | ICSK_ACK_SCHED | ICSK_ACK_TIMER);
 
-		/* Take a fresh reference first, then cancel any pending
-		 * timer and release its old reference.  Holding first
-		 * prevents a transient refcount-zero.
-		 *
-		 * hrtimer_try_to_cancel returns:
-		 *   1 — was queued, cancelled: release old ref
-		 *   0 — not active (already fired or never armed)
-		 *  -1 — callback running: old callback owns its ref
-		 */
-		sock_hold(sk);
-		if (hrtimer_try_to_cancel(&tp->aad_delack_timer) == 1)
-			__sock_put(sk);
-
-		hrtimeout = ns_to_ktime(tcp_clock_ns() +
-					(u64)ato_us * NSEC_PER_USEC);
-		hrtimer_start(&tp->aad_delack_timer, hrtimeout,
-			      HRTIMER_MODE_ABS_PINNED_SOFT);
-
+		// icsk->icsk_ack.aad_delack_active = 1;
+		//
 		pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | ato_in_us=%u ato_us=%u\n",
-			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
-			 icsk->icsk_ack.ato_us, ato_us);
-		return;
-	}
+			 sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd,
+			 tcp_sk(sk)->rcv_ssthresh, icsk->icsk_ack.ato_us, ato_us);
+		
+		// sk_reset_timer(sk, &icsk->icsk_delack_timer, timeout) for
+		// hrtimer:
+		sock_hold(sk);
+		if (hrtimer_try_to_cancel(&tcp_sk(sk)->aad_delack_timer) == 1)
+			__sock_put(sk);
+		hrtimer_start(&tcp_sk(sk)->aad_delack_timer, timeout_us, HRTIMER_MODE_REL_PINNED_SOFT);
+	} else 
 #endif
+	{
+		int ato = icsk->icsk_ack.ato;
+		unsigned long timeout;
+		if (ato > TCP_DELACK_MIN) {
+			const struct tcp_sock *tp = tcp_sk(sk);
+			int max_ato = HZ / 2;
 
-	if (ato > TCP_DELACK_MIN) {
-		const struct tcp_sock *tp = tcp_sk(sk);
-		int max_ato = HZ / 2;
+			if (inet_csk_in_pingpong_mode(sk) ||
+			    (icsk->icsk_ack.pending & ICSK_ACK_PUSHED))
+				max_ato = TCP_DELACK_MAX;
 
-		if (inet_csk_in_pingpong_mode(sk) ||
-		    (icsk->icsk_ack.pending & ICSK_ACK_PUSHED))
-			max_ato = TCP_DELACK_MAX;
+			/* Slow path, intersegment interval is "high". */
 
-		/* Slow path, intersegment interval is "high". */
+			/* If some rtt estimate is known, use it to bound delayed ack.
+			 * Do not use inet_csk(sk)->icsk_rto here, use results of rtt measurements
+			 * directly.
+			 */
+			if (tp->srtt_us) {
+				int rtt = max_t(int, usecs_to_jiffies(tp->srtt_us >> 3),
+						TCP_DELACK_MIN);
 
-		/* If some rtt estimate is known, use it to bound delayed ack.
-		 * Do not use inet_csk(sk)->icsk_rto here, use results of rtt measurements
-		 * directly.
-		 */
-		if (tp->srtt_us) {
-			int rtt = max_t(int, usecs_to_jiffies(tp->srtt_us >> 3),
-					TCP_DELACK_MIN);
+				if (rtt < max_ato)
+					max_ato = rtt;
+			}
 
-			if (rtt < max_ato)
-				max_ato = rtt;
+			ato = min(ato, max_ato);
 		}
 
-		ato = min(ato, max_ato);
-	}
+		ato = min_t(u32, ato, tcp_delack_max(sk));
 
-	ato = min_t(u32, ato, tcp_delack_max(sk));
+		/* Stay within the limit we were given */
+		timeout = jiffies + ato;
 
-	/* Stay within the limit we were given */
-	timeout = jiffies + ato;
+		/* Use new timeout only if there wasn't a older one earlier. */
+		if (icsk->icsk_ack.pending & ICSK_ACK_TIMER) {
+			/* If delack timer is about to expire, send ACK now. */
+			if (time_before_eq(icsk_delack_timeout(icsk), jiffies + (ato >> 2))) {
+				struct tcp_sock *tp = tcp_sk(sk);
+				pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | EARLY_SEND\n",
+					 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
+				tcp_send_ack(sk);
+				return;
+			}
 
-	/* Use new timeout only if there wasn't a older one earlier. */
-	if (icsk->icsk_ack.pending & ICSK_ACK_TIMER) {
-		/* If delack timer is about to expire, send ACK now. */
-		if (time_before_eq(icsk_delack_timeout(icsk), jiffies + (ato >> 2))) {
-			struct tcp_sock *tp = tcp_sk(sk);
-			pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | EARLY_SEND\n",
-				 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
-			tcp_send_ack(sk);
-			return;
+			if (!time_before(timeout, icsk_delack_timeout(icsk)))
+				timeout = icsk_delack_timeout(icsk);
 		}
-
-		if (!time_before(timeout, icsk_delack_timeout(icsk)))
-			timeout = icsk_delack_timeout(icsk);
+		smp_store_release(&icsk->icsk_ack.pending,
+				  icsk->icsk_ack.pending | ICSK_ACK_SCHED | ICSK_ACK_TIMER);
+		pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | ato_in=%d ato_final=%d timeout_ms=%u\n",
+			 sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd,
+			 tcp_sk(sk)->rcv_ssthresh, icsk->icsk_ack.ato, ato,
+			 jiffies_to_msecs(timeout - jiffies));
+		sk_reset_timer(sk, &icsk->icsk_delack_timer, timeout);
 	}
-	smp_store_release(&icsk->icsk_ack.pending,
-			  icsk->icsk_ack.pending | ICSK_ACK_SCHED | ICSK_ACK_TIMER);
-	pr_debug("TCP_DACK SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | ato_in=%d ato_final=%d timeout_ms=%u\n",
-		 sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd,
-		 tcp_sk(sk)->rcv_ssthresh, icsk->icsk_ack.ato, ato,
-		 jiffies_to_msecs(timeout - jiffies));
-	sk_reset_timer(sk, &icsk->icsk_delack_timer, timeout);
 }
 
 /* This routine sends an ack and also updates the window. */
@@ -4512,6 +4501,10 @@ void __tcp_send_ack(struct sock *sk, u32 rcv_nxt, u16 flags)
 			icsk->icsk_ack.retry++;
 		inet_csk_schedule_ack(sk);
 		icsk->icsk_ack.ato = TCP_ATO_MIN;
+#ifdef CONFIG_TCP_AAD
+		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad))
+			icsk->icsk_ack.ato_us = jiffies_to_usecs(TCP_ATO_MIN);
+#endif
 		tcp_reset_xmit_timer(sk, ICSK_TIME_DACK, delay, false);
 		return;
 	}

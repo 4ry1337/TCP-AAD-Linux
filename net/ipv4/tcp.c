@@ -1521,44 +1521,29 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	bool time_to_ack = false;
-#ifdef CONFIG_TCP_AAD
-	const char *cleanup_reason = "unknown";
-#endif
+	const char *rbuf_outcome = "SKIP";
 
 	if (inet_csk_ack_scheduled(sk)) {
 		const struct inet_connection_sock *icsk = inet_csk(sk);
-		bool two_segs;
-
-		two_segs =
-			/* Once-per-two-segments ACK was not sent by tcp_input.c */
-			tp->rcv_nxt - tp->rcv_wup > icsk->icsk_ack.rcv_mss;
-
-#ifdef CONFIG_TCP_AAD
-		/* When TCP-AAD is active, suppress the two segs window-update
-		 * ACK so the hrtimer controls ACK timing.
-		 */
-		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad) && two_segs)
-			two_segs = false;
-
-		if (two_segs) {
-			cleanup_reason = "two_segs";
-		}
-#endif
-
 		if (/* Once-per-two-segments ACK was not sent by tcp_input.c */
-		    two_segs ||
-		    /*
-		     * If this read emptied read buffer, we send ACK, if
-		     * connection is not bidirectional, user drained
-		     * receive buffer and there was a small segment
-		     * in queue.
-		     */
-		    (copied > 0 &&
-		     ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED2) ||
-		      ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED) &&
-		       !inet_csk_in_pingpong_mode(sk))) &&
-		      !atomic_read(&sk->sk_rmem_alloc)))
+		    tp->rcv_nxt - tp->rcv_wup > icsk->icsk_ack.rcv_mss) {
 			time_to_ack = true;
+			rbuf_outcome = "SEND_NOW TWO_SEG";
+		} else if (copied > 0 && !atomic_read(&sk->sk_rmem_alloc)) {
+			/*
+			 * If this read emptied read buffer, we send ACK, if
+			 * connection is not bidirectional, user drained
+			 * receive buffer and there was a small segment
+			 * in queue.
+			 */
+			if (icsk->icsk_ack.pending & ICSK_ACK_PUSHED2) {
+				time_to_ack = true;
+				rbuf_outcome = "SEND_NOW PUSHED2";
+			} else if ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED) &&
+				   !inet_csk_in_pingpong_mode(sk)) {
+				time_to_ack = true;
+				rbuf_outcome = "SEND_NOW PUSHED";
+			}
 		}
 	}
 
@@ -1582,26 +1567,19 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 			 */
 			if (new_window && new_window >= 2 * rcv_window_now) {
 				time_to_ack = true;
-#ifdef CONFIG_TCP_AAD
-				cleanup_reason = "window_doubled";
-#endif
-      }
+				rbuf_outcome = "SEND_NOW WINDOW_OPEN";
+			}
 		}
 	}
-	if (time_to_ack) {
 #ifdef CONFIG_TCP_AAD
-		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad))
-			pr_debug(
-				"TCP_AAD CLEANUP sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | reason=%s\n",
-				sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
-				cleanup_reason);
-		else
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad))
+		pr_debug("TCP_AAD RBUF_CLN sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | %s\n",
+			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh, rbuf_outcome);
+	else
 #endif
-			pr_debug(
-				"TCP_DACK CLEANUP sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | bytes=%u mss=%u\n",
-				sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd,
-				tp->rcv_ssthresh, tp->rcv_nxt - tp->rcv_wup,
-				inet_csk(sk)->icsk_ack.rcv_mss);
+		pr_debug("TCP_DACK RBUF_CLN sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | %s\n",
+			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh, rbuf_outcome);
+	if (time_to_ack) {
 		tcp_mstamp_refresh(tp);
 		tcp_send_ack(sk);
 	}

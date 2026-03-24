@@ -389,6 +389,9 @@ struct tcp_sock {
 		   advanced:1;	 /* mstamp advanced since last lost marking */
 	} rack;
 	u8	compressed_ack;
+#ifdef CONFIG_TCP_AAD
+	u8	aad_delayed_segs;
+#endif
 	u8	dup_ack_counter:2,
 		tlp_retrans:1,	/* TLP is a retransmission */
 		syn_ect_snt:2,	/* AccECN ECT memory, only */

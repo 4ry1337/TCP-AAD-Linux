@@ -123,14 +123,12 @@ struct inet_connection_sock {
 		__u16		  rcv_mss;	 /* MSS used for delayed ACK decisions	   */
 
 #ifdef CONFIG_TCP_AAD
-		/* TCP Adaptive ACK Delay fields */
-		__u64 iat_min_us;
-		__u64 iat_lrtime_us;
-		__u64 lrcvtime_us;
-		__u32 ato_us;		 /* ATO in microseconds for hrtimer path */
-		__u8  aad_delack_active; /* 1 if aad hrtimer is active delack   */
+		__u64             lrcvtime_us;
+		__u64             iat_lrtime_us;
+		__u64             iat_min_us;
+		__u32             ato_us;
+		__u8              aad_delack_active; 
 #endif
-
 	} icsk_ack;
 	struct {
 		/* Range of MTUs to search */

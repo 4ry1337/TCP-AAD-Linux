@@ -396,6 +396,10 @@ static inline void tcp_dec_quickack_mode(struct sock *sk)
 			icsk->icsk_ack.quick = 0;
 			/* Leaving quickack mode we deflate ATO. */
 			icsk->icsk_ack.ato   = TCP_ATO_MIN;
+#ifdef CONFIG_TCP_AAD
+			if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad))
+				icsk->icsk_ack.ato_us = jiffies_to_usecs(TCP_ATO_MIN);
+#endif
 		} else
 			icsk->icsk_ack.quick -= pkts;
 	}
