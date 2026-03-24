@@ -1520,7 +1520,12 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 	if (inet_csk_ack_scheduled(sk)) {
 		const struct inet_connection_sock *icsk = inet_csk(sk);
 		if (/* Once-per-two-segments ACK was not sent by tcp_input.c */
-		    tp->rcv_nxt - tp->rcv_wup > icsk->icsk_ack.rcv_mss) {
+		    tp->rcv_nxt - tp->rcv_wup > icsk->icsk_ack.rcv_mss
+#ifdef CONFIG_TCP_AAD
+		    && !(READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad) &&
+			hrtimer_is_queued(&tcp_sk(sk)->aad_delack_timer))
+#endif
+		    ) {
 			time_to_ack = true;
 			rbuf_outcome = "SEND_NOW TWO_SEG";
 		} else if (copied > 0 && !atomic_read(&sk->sk_rmem_alloc)) {

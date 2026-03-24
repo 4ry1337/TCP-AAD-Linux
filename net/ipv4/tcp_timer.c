@@ -19,8 +19,8 @@
  *		Jorge Cwik, <jorge@laser.satlink.net>
  */
 
-#include "asm-generic/rwonce.h"
-#include "linux/jiffies.h"
+#include <asm-generic/rwonce.h>
+#include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/gfp.h>
 #include <net/tcp.h>

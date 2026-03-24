@@ -62,10 +62,10 @@
  *		Pasi Sarolahti:		F-RTO for dealing with spurious RTOs
  */
 
-#include "asm-generic/rwonce.h"
-#include "linux/hrtimer.h"
-#include "linux/jiffies.h"
-#include "linux/limits.h"
+#include <asm-generic/rwonce.h>
+#include <linux/hrtimer.h>
+#include <linux/jiffies.h>
+#include <linux/limits.h>
 #define pr_fmt(fmt) "TCP: " fmt
 
 #include <linux/mm.h>
@@ -6055,7 +6055,7 @@ send_now:
 
 	if (!ofo_possible || RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
 #ifdef CONFIG_TCP_AAD
-		if(READ_ONCE(net->ipv4.sysctl_tcp_aad))
+		if (READ_ONCE(net->ipv4.sysctl_tcp_aad))
 			tp->aad_delayed_segs++;
 #endif
 		tcp_send_delayed_ack(sk);
