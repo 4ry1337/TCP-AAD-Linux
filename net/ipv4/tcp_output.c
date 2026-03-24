@@ -4406,14 +4406,11 @@ void tcp_send_delayed_ack(struct sock *sk)
 		smp_store_release(&icsk->icsk_ack.pending,
 				  icsk->icsk_ack.pending | ICSK_ACK_SCHED | ICSK_ACK_TIMER);
 
-		// icsk->icsk_ack.aad_delack_active = 1;
-		//
 		pr_debug("TCP_AAD SCHED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | ato_in_us=%u ato_us=%u\n",
 			 sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd,
 			 tcp_sk(sk)->rcv_ssthresh, icsk->icsk_ack.ato_us, ato_us);
 		
-		// sk_reset_timer(sk, &icsk->icsk_delack_timer, timeout) for
-		// hrtimer:
+		// sk_reset_timer(sk, &icsk->icsk_delack_timer, timeout) for hrtimer:
 		sock_hold(sk);
 		if (hrtimer_try_to_cancel(&tcp_sk(sk)->aad_delack_timer) == 1)
 			__sock_put(sk);
@@ -4502,8 +4499,17 @@ void __tcp_send_ack(struct sock *sk, u32 rcv_nxt, u16 flags)
 		inet_csk_schedule_ack(sk);
 		icsk->icsk_ack.ato = TCP_ATO_MIN;
 #ifdef CONFIG_TCP_AAD
-		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad))
+		if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
 			icsk->icsk_ack.ato_us = jiffies_to_usecs(TCP_ATO_MIN);
+			smp_store_release(&icsk->icsk_ack.pending,
+					  icsk->icsk_ack.pending | ICSK_ACK_SCHED | ICSK_ACK_TIMER);
+			sock_hold(sk);
+			if (hrtimer_try_to_cancel(&tcp_sk(sk)->aad_delack_timer) == 1)
+				__sock_put(sk);
+			hrtimer_start(&tcp_sk(sk)->aad_delack_timer,
+				      ns_to_ktime((u64)jiffies_to_usecs(delay) * NSEC_PER_USEC),
+				      HRTIMER_MODE_REL_PINNED_SOFT);
+		} else
 #endif
 		tcp_reset_xmit_timer(sk, ICSK_TIME_DACK, delay, false);
 		return;
@@ -4527,14 +4533,20 @@ EXPORT_SYMBOL_GPL(__tcp_send_ack);
 
 void tcp_send_ack(struct sock *sk)
 {
-	#ifdef CONFIG_TCP_AAD
-	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) 
+#ifdef CONFIG_TCP_AAD
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
+		if (hrtimer_try_to_cancel(&tcp_sk(sk)->aad_delack_timer) == 1)
+			__sock_put(sk);
+		sk_stop_timer(sk, &inet_csk(sk)->icsk_delack_timer);
+		tcp_sk(sk)->aad_delayed_segs = 0;
 		pr_debug("TCP_AAD ACK_SENT sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
 			 sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd, tcp_sk(sk)->rcv_ssthresh);
-	else
-	#endif
+	} else 
+#endif
+	{
 		pr_debug("TCP_DACK ACK_SENT sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
 			 sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd, tcp_sk(sk)->rcv_ssthresh);
+	}
 	__tcp_send_ack(sk, tcp_sk(sk)->rcv_nxt, 0);
 }
 

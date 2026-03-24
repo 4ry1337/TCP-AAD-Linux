@@ -19,6 +19,7 @@
  *		Jorge Cwik, <jorge@laser.satlink.net>
  */
 
+#include "asm-generic/rwonce.h"
 #include "linux/jiffies.h"
 #include <linux/module.h>
 #include <linux/gfp.h>
@@ -324,7 +325,7 @@ void tcp_delack_timer_handler(struct sock *sk)
 		return;
 
 #ifdef CONFIG_TCP_AAD
-	if (tp->aad_delayed_segs) {
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
 		pr_debug("TCP_AAD TIMER_FIRED sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
 			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
 
@@ -923,12 +924,9 @@ static enum hrtimer_restart tcp_aad_delack_kick(struct hrtimer *timer)
 	struct sock *sk = (struct sock *)tp;
 	struct inet_connection_sock *icsk = inet_csk(sk);
 
-	/* Avoid taking socket spinlock if there is no ACK to send.
-	 * The compressed_ack check is racy, but a separate hrtimer
-	 * will take care of it eventually.
-	 */
+	/* Avoid taking socket spinlock if there is no ACK to send. */
 	if (!(smp_load_acquire(&icsk->icsk_ack.pending) & ICSK_ACK_TIMER) &&
-	    !READ_ONCE(tcp_sk(sk)->aad_delayed_segs))
+	    !READ_ONCE(tp->aad_delayed_segs))
 		goto out;
 
 	bh_lock_sock(sk);

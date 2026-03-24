@@ -455,12 +455,6 @@ void tcp_init_sock(struct sock *sk)
 	icsk->icsk_rto_min = usecs_to_jiffies(rto_min_us);
 	icsk->icsk_delack_max = TCP_DELACK_MAX;
 
-#ifdef CONFIG_TCP_AAD
-	icsk->icsk_ack.iat_min_us = U64_MAX;
-	icsk->icsk_ack.iat_lrtime_us = 0;
-	icsk->icsk_ack.lrcvtime_us = 0;
-#endif
-
 	tp->mdev_us = jiffies_to_usecs(TCP_TIMEOUT_INIT);
 	minmax_reset(&tp->rtt_min, tcp_jiffies32, ~0U);
 

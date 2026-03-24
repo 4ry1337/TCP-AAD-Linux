@@ -127,7 +127,6 @@ struct inet_connection_sock {
 		__u64             iat_lrtime_us;
 		__u64             iat_min_us;
 		__u32             ato_us;
-		__u8              aad_delack_active; 
 #endif
 	} icsk_ack;
 	struct {
