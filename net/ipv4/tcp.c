@@ -1538,7 +1538,12 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 			if (icsk->icsk_ack.pending & ICSK_ACK_PUSHED2) {
 				time_to_ack = true;
 				rbuf_outcome = "RBUF_PUSH2";
-			} else if ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED) &&
+			} else if ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED
+#ifdef CONFIG_TCP_AAD
+				    && !(READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad) &&
+					hrtimer_is_queued(&tcp_sk(sk)->aad_delack_timer))
+#endif
+			) &&
 				   !inet_csk_in_pingpong_mode(sk)) {
 				time_to_ack = true;
 				rbuf_outcome = "RBUF_PUSH1";
