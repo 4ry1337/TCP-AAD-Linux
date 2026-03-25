@@ -169,17 +169,31 @@ static void tcp_event_data_sent(struct tcp_sock *tp,
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	const u32 now = tcp_jiffies32;
+#ifdef CONFIG_TCP_AAD
+	const u64 now_us = tcp_clock_us();
+#endif
 
 	if (tcp_packets_in_flight(tp) == 0)
 		tcp_ca_event(sk, CA_EVENT_TX_START);
 
 	tp->lsndtime = now;
+#ifdef CONFIG_TCP_AAD
+	tp->lsndtime_us = now_us;
+#endif
 
 	/* If it is a reply for ato after last received
 	 * packet, increase pingpong count.
 	 */
+#ifdef CONFIG_TCP_AAD
+	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad)) {
+		if (now_us - icsk->icsk_ack.lrcvtime_us < icsk->icsk_ack.ato_us)
+			inet_csk_inc_pingpong_cnt(sk);
+	} else
+#endif
+	{
 	if ((u32)(now - icsk->icsk_ack.lrcvtime) < icsk->icsk_ack.ato)
 		inet_csk_inc_pingpong_cnt(sk);
+	}
 }
 
 /* Account for an ACK we sent. */
@@ -4511,7 +4525,9 @@ void __tcp_send_ack(struct sock *sk, u32 rcv_nxt, u16 flags)
 				      HRTIMER_MODE_REL_PINNED_SOFT);
 		} else
 #endif
-		tcp_reset_xmit_timer(sk, ICSK_TIME_DACK, delay, false);
+		{
+			tcp_reset_xmit_timer(sk, ICSK_TIME_DACK, delay, false);
+		}
 		return;
 	}
 
