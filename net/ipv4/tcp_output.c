@@ -4554,7 +4554,6 @@ void tcp_send_ack(struct sock *sk)
 		if (hrtimer_try_to_cancel(&tcp_sk(sk)->aad_delack_timer) == 1)
 			__sock_put(sk);
 		sk_stop_timer(sk, &inet_csk(sk)->icsk_delack_timer);
-		tcp_sk(sk)->aad_delayed_segs = 0;
 		pr_debug("TCP_AAD ACK_SENT sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
 			 sk, tcp_sk(sk)->rcv_nxt, tcp_sk(sk)->rcv_wup, tcp_sk(sk)->rcv_wnd, tcp_sk(sk)->rcv_ssthresh);
 	} else 

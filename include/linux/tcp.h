@@ -393,7 +393,9 @@ struct tcp_sock {
 	} rack;
 	u8	compressed_ack;
 #ifdef CONFIG_TCP_AAD
-	u8	aad_delayed_segs;
+	u32	aad_iat_rbuf[64];
+	u8	aad_iat_rbuf_idx;
+	u8	aad_iat_rbuf_cnt;
 #endif
 	u8	dup_ack_counter:2,
 		tlp_retrans:1,	/* TLP is a retransmission */

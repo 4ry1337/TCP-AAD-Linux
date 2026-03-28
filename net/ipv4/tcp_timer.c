@@ -21,6 +21,7 @@
 
 #include <asm-generic/rwonce.h>
 #include <linux/jiffies.h>
+#include <linux/sort.h>
 #include <linux/module.h>
 #include <linux/gfp.h>
 #include <net/tcp.h>
@@ -330,7 +331,6 @@ void tcp_delack_timer_handler(struct sock *sk)
 			 sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh);
 
 		icsk->icsk_ack.pending &= ~ICSK_ACK_TIMER;
-		tp->aad_delayed_segs = 0;
 
 		if (inet_csk_ack_scheduled(sk)) {
 			pr_debug("TCP_AAD TIMER_ACK sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u\n",
@@ -917,6 +917,12 @@ static enum hrtimer_restart tcp_compressed_ack_kick(struct hrtimer *timer)
 }
 
 #ifdef CONFIG_TCP_AAD
+static int aad_iat_cmp(const void *a, const void *b)
+{
+	return (*(const u32 *)a > *(const u32 *)b) -
+	       (*(const u32 *)a < *(const u32 *)b);
+}
+
 static enum hrtimer_restart tcp_aad_delack_kick(struct hrtimer *timer)
 {
 	struct tcp_sock *tp = container_of(timer, struct tcp_sock,
@@ -925,11 +931,24 @@ static enum hrtimer_restart tcp_aad_delack_kick(struct hrtimer *timer)
 	struct inet_connection_sock *icsk = inet_csk(sk);
 
 	/* Avoid taking socket spinlock if there is no ACK to send. */
-	if (!(smp_load_acquire(&icsk->icsk_ack.pending) & ICSK_ACK_TIMER) &&
-	    !READ_ONCE(tp->aad_delayed_segs))
+	if (!(smp_load_acquire(&icsk->icsk_ack.pending) & ICSK_ACK_TIMER))
 		goto out;
 
 	bh_lock_sock(sk);
+	{
+		u8 cnt = tp->aad_iat_rbuf_cnt;
+
+		if (cnt) {
+			u32 tmp[64];
+
+			memcpy(tmp, tp->aad_iat_rbuf, cnt * sizeof(u32));
+			sort(tmp, cnt, sizeof(u32), aad_iat_cmp, NULL);
+			if (cnt & 1)
+				icsk->icsk_ack.iat_estimate_us = tmp[(cnt - 1) / 2];
+			else
+				icsk->icsk_ack.iat_estimate_us = (tmp[cnt / 2 - 1] + tmp[cnt / 2]) / 2;
+		}
+	}
 	if (!sock_owned_by_user(sk)) {
 		tcp_delack_timer_handler(sk);
 	} else {

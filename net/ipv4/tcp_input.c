@@ -1036,17 +1036,7 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 			tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
 			icsk->icsk_ack.ato = TCP_ATO_MIN;
 			icsk->icsk_ack.ato_us = jiffies_to_usecs(TCP_ATO_MIN);
-			icsk->icsk_ack.iat_lrtime_us = now_us;
-			icsk->icsk_ack.iat_min_us = U64_MAX;
 		} else {
-			if (now_us > 1000000 + icsk->icsk_ack.iat_lrtime_us) {
-				pr_debug("TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | IAT_RESET now_us=%llu seq=%u end_seq=%u old_iat_min=%llu\n",
-					sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
-					now_us, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq,
-					icsk->icsk_ack.iat_min_us);
-				icsk->icsk_ack.iat_min_us = U64_MAX;
-				icsk->icsk_ack.iat_lrtime_us = now_us;
-			}
 			u64 iat_curr_us = now_us - icsk->icsk_ack.lrcvtime_us;
 			if (iat_curr_us <= 5) {
 				/* 5us: filters ARQ artifacts without discarding valid intra-burst gaps */
@@ -1059,20 +1049,20 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 					TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, jiffies_to_usecs(icsk->icsk_rto));
 				tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
 			} else {
-				icsk->icsk_ack.iat_min_us = min(icsk->icsk_ack.iat_min_us, iat_curr_us);
+				tp->aad_iat_rbuf[tp->aad_iat_rbuf_idx] = (u32)iat_curr_us;
+				tp->aad_iat_rbuf_idx = (tp->aad_iat_rbuf_idx + 1) & 63;
+				if (tp->aad_iat_rbuf_cnt < 64)
+					tp->aad_iat_rbuf_cnt++;
 
-				if (tp->aad_delayed_segs < 2) {
-					icsk->icsk_ack.ato_us = jiffies_to_usecs(TCP_ATO_MIN);
-				} else {
+				if (icsk->icsk_ack.iat_estimate_us) {
 					u8 alpha = READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_aad_alpha);
-					u64 ato_us = div_u64(icsk->icsk_ack.iat_min_us * alpha, 10);
-					icsk->icsk_ack.ato_us = (u32)ato_us;
-					pr_debug("TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | UPDATE now_us=%llu seq=%u end_seq=%u iat_curr=%llu iat_min=%llu ato_us=%llu\n",
-						sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
-						now_us, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us,
-						icsk->icsk_ack.iat_min_us, ato_us);
+					icsk->icsk_ack.ato_us = icsk->icsk_ack.iat_estimate_us * alpha / 10;
 				}
 
+				pr_debug("TCP_AAD RECV sk=%p rcv_nxt=%u rcv_wup=%u rcv_wnd=%u rcv_ssthresh=%u | UPDATE now_us=%llu seq=%u end_seq=%u iat_curr=%llu iat_estimate=%u ato_us=%u\n",
+					sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh,
+					now_us, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us,
+					icsk->icsk_ack.iat_estimate_us, icsk->icsk_ack.ato_us);
 			}
 
 		}
@@ -6054,10 +6044,6 @@ send_now:
 	}
 
 	if (!ofo_possible || RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
-#ifdef CONFIG_TCP_AAD
-		if (READ_ONCE(net->ipv4.sysctl_tcp_aad))
-			tp->aad_delayed_segs++;
-#endif
 		tcp_send_delayed_ack(sk);
 		ack_snd_outcome = "ACK_DELAYED";
 		goto result;

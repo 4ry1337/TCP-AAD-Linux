@@ -124,8 +124,7 @@ struct inet_connection_sock {
 
 #ifdef CONFIG_TCP_AAD
 		__u64             lrcvtime_us;
-		__u64             iat_lrtime_us;
-		__u64             iat_min_us;
+		__u32             iat_estimate_us;
 		__u32             ato_us;
 #endif
 	} icsk_ack;
