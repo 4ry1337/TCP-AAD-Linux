@@ -1048,6 +1048,8 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 					sk, tp->rcv_nxt, tp->rcv_wup, tp->rcv_wnd, tp->rcv_ssthresh, now_us,
 					TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq, iat_curr_us, jiffies_to_usecs(icsk->icsk_rto));
 				tcp_incr_quickack(sk, TCP_MAX_QUICKACKS);
+				tp->aad_iat_rbuf_cnt = 0;
+				tp->aad_iat_rbuf_idx = 0;
 			} else {
 				tp->aad_iat_rbuf[tp->aad_iat_rbuf_idx] = (u32)iat_curr_us;
 				tp->aad_iat_rbuf_idx = (tp->aad_iat_rbuf_idx + 1) & 63;
